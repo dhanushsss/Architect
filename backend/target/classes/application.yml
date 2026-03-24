@@ -1,0 +1,53 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/architect}
+    username: ${DB_USERNAME:architect}
+    password: ${DB_PASSWORD:architect}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false          # never hold DB connection during view rendering; prevents LazyInitializationException → 403
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          batch_size: 30         # batch INSERT during scan — reduces DB round-trips by ~10x
+        order_inserts: true
+        order_updates: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+app:
+  # Product semver — bump on release; override: ARCHITECT_VERSION=1.2.0
+  product-version: ${ARCHITECT_VERSION:1.1.0}
+  github:
+    client-id: ${GITHUB_CLIENT_ID}
+    client-secret: ${GITHUB_CLIENT_SECRET}
+    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:8080/api/auth/callback}
+  jwt:
+    secret: ${JWT_SECRET:architect-secret-key-change-in-production-must-be-256-bits-long}
+    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+  frontend-url: ${FRONTEND_URL:http://localhost:3000}
+  public-base-url: ${APP_PUBLIC_URL:http://localhost:8080}
+  ui:
+    core-only: ${UI_CORE_ONLY:false}
+  slack:
+    webhook-url: ${SLACK_WEBHOOK_URL:}
+  anthropic:
+    api-key: ${ANTHROPIC_API_KEY:}
+  pr-engine:
+    max-changed-files-to-scan: ${PR_MAX_FILES_SCAN:50}
+    post-commit-status: ${PR_POST_COMMIT_STATUS:false}
+    fail-on-review-required: ${PR_FAIL_ON_REVIEW:false}
+
+logging:
+  level:
+    com.architect: DEBUG
+    org.springframework.security: INFO

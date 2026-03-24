@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: architect-postgres
+    environment:
+      POSTGRES_DB: architect
+      POSTGRES_USER: architect
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-architect}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U architect"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - architect-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: architect-backend
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/architect
+      DB_USERNAME: architect
+      DB_PASSWORD: ${DB_PASSWORD:-architect}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/api/auth/callback}
+      JWT_SECRET: ${JWT_SECRET:-architect-secret-key-change-in-production-32bytes}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - architect-net
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: architect-frontend
+    ports:
+      - "3000:80"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080}
+    depends_on:
+      - backend
+    networks:
+      - architect-net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  architect-net:
+    driver: bridge

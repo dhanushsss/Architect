@@ -1,0 +1,18 @@
+# Phase 4 — Trigger Architect to refresh graph after merge to main.
+# Set secrets: ARCHITECT_API_URL (e.g. https://api.example.com), ARCHITECT_JWT (long-lived or CI token).
+name: Architect rescan
+on:
+  push:
+    branches: [main]
+
+jobs:
+  rescan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan all connected repos (per user token on server)
+        run: |
+          curl -sf -X POST "${{ secrets.ARCHITECT_API_URL }}/api/scan/all" \
+            -H "Authorization: Bearer ${{ secrets.ARCHITECT_JWT }}" \
+            -H "Content-Type: application/json" || true
+        # Note: ARCHITECT_JWT must be a valid user JWT. Prefer a machine user or
+        # extend backend with a scoped CI token (future).
