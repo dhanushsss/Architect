@@ -1,0 +1,7 @@
+com/architect/service/ImpactRiskScoringTest.class
+com/architect/service/EndpointExtractorServiceTest.class
+com/architect/RateLimitInterceptorIntegrationTest.class
+com/architect/service/PrCommentFormatterTest.class
+com/architect/SecurityConfigIntegrationTest.class
+com/architect/AbstractPostgresIntegrationTest.class
+com/architect/GraphControllerIntegrationTest.class

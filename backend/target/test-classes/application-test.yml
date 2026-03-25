@@ -1,0 +1,16 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+app:
+  jwt:
+    secret: test-jwt-secret-fixed-for-integration-tests-32bytes
+    expiration-ms: 86400000
+  frontend-url: http://localhost:3000
+  github:
+    client-id: test-client
+    client-secret: test-secret
+    redirect-uri: http://localhost:8080/api/auth/callback
