@@ -114,8 +114,12 @@ public class EndpointExtractorService {
                 int lineNo = i + 1;
 
                 Matcher m = METHOD_MAPPING.matcher(line);
-                if (!m.find()) m = SIMPLE_MAPPING.matcher(line);
-                if (m.find()) {
+                boolean methodMatched = m.find();
+                if (!methodMatched) {
+                    m = SIMPLE_MAPPING.matcher(line);
+                    methodMatched = m.find();
+                }
+                if (methodMatched) {
                     results.add(ep(m.group(1), joinPaths(classPrefix, m.group(2)), lineNo, "Spring Boot", "java"));
                     continue;
                 }

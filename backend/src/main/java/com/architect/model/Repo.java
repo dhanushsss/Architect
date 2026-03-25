@@ -51,6 +51,10 @@ public class Repo {
     @Column(name = "last_scanned_at")
     private LocalDateTime lastScannedAt;
 
+    /** Git SHA of default branch at last successful full/incremental scan (for incremental skips). */
+    @Column(name = "last_scanned_commit_sha", length = 64)
+    private String lastScannedCommitSha;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -61,6 +65,6 @@ public class Repo {
     }
 
     public enum ScanStatus {
-        PENDING, SCANNING, COMPLETE, FAILED
+        PENDING, SCANNING, COMPLETE, FAILED, RATE_LIMITED
     }
 }

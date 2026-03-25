@@ -74,16 +74,67 @@ public final class PrCommentFormatter {
     }
 
     private static void appendWhyExact(StringBuilder sb, ImpactDto impact) {
+        sb.append("### Why this is risky\n\n");
+        appendConcreteCallSites(sb, impact, primaryApiLine(impact));
+
         List<String> factors = impact.getRiskFactors();
-        if (factors == null || factors.isEmpty()) return;
-        sb.append("### Why exactly is this risky?\n\n");
-        for (String line : factors) {
-            sb.append("- ").append(line).append("\n");
+        if (factors != null && !factors.isEmpty()) {
+            for (String line : factors) {
+                sb.append("- ").append(line).append("\n");
+            }
         }
-        if (impact.getConfidenceScore() != null) {
-            sb.append("\n**Analysis confidence:** **").append(impact.getConfidenceScore().intValue())
-                .append("%** — based on graph freshness and how much of the PR was parsed.\n\n");
+        appendAnalysisConfidenceLine(sb, impact);
+    }
+
+    private static void appendConcreteCallSites(StringBuilder sb, ImpactDto impact, String api) {
+        List<ImpactDto.AffectedItem> files = impact.getAffectedFiles();
+        if (files == null || files.isEmpty()) {
+            return;
         }
+        int max = Math.min(files.size(), 4);
+        for (int i = 0; i < max; i++) {
+            ImpactDto.AffectedItem f = files.get(i);
+            String repoAndLine = f.getDetail() != null ? f.getDetail() : "unknown";
+            String callSite = f.getName() != null ? f.getName() : "unknown-file";
+            sb.append("- ").append(repoAndLine).append(" calls `").append(api).append("` (")
+                    .append(callSite).append(")\n");
+        }
+        if (files.size() > max) {
+            sb.append("- ...and ").append(files.size() - max).append(" more call site(s)\n");
+        }
+        sb.append("\n");
+    }
+
+    private static void appendAnalysisConfidenceLine(StringBuilder sb, ImpactDto impact) {
+        if (impact.getConfidenceScore() == null) {
+            return;
+        }
+        int conf = impact.getConfidenceScore().intValue();
+        int unresolved = impact.getUnresolvedCallCount() != null ? impact.getUnresolvedCallCount() : 0;
+        int stale = impact.getStaleRepoCount() != null ? impact.getStaleRepoCount() : 0;
+        int unscanned = impact.getUnscannedRepoCount() != null ? impact.getUnscannedRepoCount() : 0;
+        int notFetched = impact.getChangedFilesNotFetched() != null ? impact.getChangedFilesNotFetched() : 0;
+
+        sb.append("\n**Confidence:** ").append(conf).append("%\n");
+        if (unresolved > 0 || stale > 0 || unscanned > 0 || notFetched > 0) {
+            sb.append("**Unknowns:**\n");
+            if (unresolved > 0) {
+                sb.append("- ⚠️ ").append(unresolved).append(" API call(s) could not be resolved\n");
+            }
+            if (stale > 0) {
+                sb.append("- ⚠️ ").append(stale).append(" repo(s) have stale data (>48h)\n");
+            }
+            if (unscanned > 0) {
+                sb.append("- ⚠️ ").append(unscanned).append(" repo(s) have not been deeply scanned yet\n");
+            }
+            if (notFetched > 0) {
+                sb.append("- ⚠️ ").append(notFetched).append(" changed file(s) could not be fetched at PR head\n");
+            }
+        }
+        if (stale > 0 || unscanned > 0) {
+            sb.append("\n⚠️ Data may be stale. Re-run deep scan before merge-critical decisions.\n");
+        }
+        sb.append("\n");
     }
 
     private static String formatCritical(ImpactDto impact, int repos, int depFiles, String api,

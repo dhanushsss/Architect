@@ -64,7 +64,8 @@ export const repoApi = {
 
 // ── Scans ─────────────────────────────────────────────────────────────────────
 export const scanApi = {
-  triggerScan: (repoId: number) => api.post<ScanStatus>(`/scan/${repoId}`).then(r => r.data),
+  triggerScan: (repoId: number, mode: 'quick' | 'deep' | 'incremental' = 'deep') =>
+    api.post<ScanStatus>(`/scan/${repoId}`, null, { params: { mode } }).then(r => r.data),
   scanAll: () => api.post<ScanStatus[]>('/scan/all').then(r => r.data),
   getStatus: (repoId: number) => api.get<ScanStatus>(`/scan/${repoId}/status`).then(r => r.data)
 }
@@ -72,6 +73,10 @@ export const scanApi = {
 // ── Graph ─────────────────────────────────────────────────────────────────────
 export const graphApi = {
   getGraph: () => api.get<GraphDto>('/graph').then(r => r.data),
+  getWiringWarnings: () =>
+    api.get<{ id: number; repoId: number | null; factType: string; message: string; createdAt: string | null }[]>(
+      '/graph/warnings'
+    ).then(r => r.data),
   getPackageTree: (repoId: number) => api.get<any>(`/graph/tree/${repoId}`).then(r => r.data),
   traceComponent: (repoId: number, file: string) =>
     api.get<any>(`/graph/trace`, { params: { repoId, file } }).then(r => r.data),

@@ -21,11 +21,30 @@ public class GraphController {
     private final GraphBuilderService graphBuilderService;
     private final RepoRepository repoRepository;
     private final ComponentImportRepository componentImportRepository;
+    private final RuntimeWiringWarningRepository runtimeWiringWarningRepository;
 
     @GetMapping
     public ResponseEntity<GraphDto> getGraph(@AuthenticationPrincipal User user) {
         GraphDto graph = graphBuilderService.buildGraph(user);
         return ResponseEntity.ok(graph);
+    }
+
+    /**
+     * Ambiguous runtime wiring (e.g. Vite proxy port matching multiple repos).
+     */
+    @GetMapping("/warnings")
+    public ResponseEntity<List<Map<String, Object>>> getWiringWarnings(@AuthenticationPrincipal User user) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RuntimeWiringWarning w : runtimeWiringWarningRepository.findByUserOrderByCreatedAtDesc(user)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", w.getId());
+            m.put("repoId", w.getRepo() != null ? w.getRepo().getId() : null);
+            m.put("factType", w.getFactType());
+            m.put("message", w.getMessage());
+            m.put("createdAt", w.getCreatedAt() != null ? w.getCreatedAt().toString() : null);
+            out.add(m);
+        }
+        return ResponseEntity.ok(out);
     }
 
     /**

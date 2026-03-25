@@ -42,6 +42,8 @@ public class AppProperties {
         private String clientId;
         private String clientSecret;
         private String redirectUri;
+        /** Optional: GitHub webhook secret for X-Hub-Signature-256 validation */
+        private String webhookSecret;
     }
 
     @Data

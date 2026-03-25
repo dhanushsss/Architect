@@ -1,6 +1,6 @@
 # Architect — Architecture Document
 
-**Version:** 1.1.0 · **Updated:** 2026-03-24
+**Version:** 1.1.0 · **Updated:** 2026-03-25
 **Stack:** Java 21 / Spring Boot 3.2 · React 18 / TypeScript · PostgreSQL 15
 
 ---
@@ -130,18 +130,30 @@ WebhookController
 RepoScannerService
   ├── EndpointExtractorService
   │     inner parsers: SpringParser, NodeParser, PythonParser, RubyParser, GoParser
+  │     SpringParser: extracts @GetMapping/@PostMapping/@RequestMapping etc.
+  │     NodeParser:   Express app.get/post/router.get/post
+  │     PythonParser: FastAPI @app.get/post, Flask @app.route
   │     (Tree-sitter ready — swap parser without touching dispatch)
   ├── BackendHttpCallDetectorService
-  │     Java:   WebClient.uri(), RestTemplate.get/postForObject(), URI.create()
-  │     Node.js: axios, got, superagent, node-fetch/undici fetch()
-  │     Python:  requests, httpx, aiohttp
+  │     Java:   WebClient.uri("…"), RestTemplate.get/postForObject/ForEntity("…"), URI.create("…")
+  │     Node.js: axios.get/post, axios({url}), got(), fetch(abs-url), superagent, needle
+  │     Python:  requests/httpx/session/client.get/post/…("…") — including f"…" f-strings
+  │              e.g. client.post(f"{REGISTRY}/register") is detected
   ├── BackendOutboundHostExtractor
-  │     detects: @FeignClient(name=), http://service-name:port patterns
+  │     Java:   http://service-name:port patterns (not localhost, not public TLDs)
+  │             @FeignClient("user-service") and @FeignClient(name="…")
+  │     Config: http://hostname:port patterns in yml/properties/.env files
   ├── ImportTracerService
   │     classifies: INTERNAL (./xx) | MONOREPO (@scope/xx) | EXTERNAL
   ├── RuntimeWiringExtractorService
-  │     parses: application.yml, vite.config.ts, .env
+  │     application.yml/.properties:  APP_NAME, SERVER_PORT, GATEWAY_ROUTE (lb://, http://host:port), EUREKA_REGISTRY
+  │     vite.config.ts/.js:           VITE_PROXY (target: url, keyed by proxy path)
+  │     .env files:                   REGISTRY_URL, PUBLIC_URL, GATEWAY_URL/VITE_API/API_GATEWAY
+  │     server.js / gateway.js / index.js / app.js (Node.js entry files):
+  │                                   GATEWAY_ROUTE from routing map objects
+  │                                   e.g. { bookings: "booking-service" } → GATEWAY_ROUTE /api/bookings/** → booking-service
   ├── PathSegmentIndex          ← built once per buildDependencyEdges()
+  ├── buildDependencyEdges()    ← self-match exclusion: caller's own endpoints are never selected
   ├── @Async                    ← non-blocking, Spring TaskExecutor
   └── @CacheEvict("graph")      ← invalidates cache on scan complete
 
@@ -227,7 +239,19 @@ dependency_edges    source_id, source_type, target_id, target_type,
                     edge_type (CALLS | IMPORTS | WIRED | DEFINES)
 ```
 
-Migrations managed by Flyway: `V1__init.sql` → `V6__runtime_wiring_facts.sql`
+Migrations managed by Flyway: `V1__init.sql` → `V9__repos_last_scanned_commit.sql`
+
+| Migration | Contents |
+|-----------|----------|
+| V1 | Core schema: users, repos, api_endpoints, api_calls, dependency_edges |
+| V2 | AI, orgs, snapshots, audit logs, API keys |
+| V3 | component_imports: import_type, resolved_file; dependency_edges indexes |
+| V4 | runtime_wiring_facts table |
+| V5 | pr_analyses, pr_analysis_runs |
+| V6 | api_calls: normalized_pattern, target_kind, external_host columns |
+| V7 | runtime_wiring_warnings table |
+| V8 | github_etag_cache table (ETag-based conditional GitHub fetches) |
+| V9 | repos: last_scanned_commit_sha column (incremental scan support) |
 
 ---
 
@@ -266,13 +290,39 @@ Build (O(N)):
     if no * → exactIndex.put(norm, ep)
     else    → wildcardIndex[countSegments(norm)].add(ep)
 
-Query (O(1) exact + O(E_k) wildcard):
+Query findCandidates(callPath):
   norm = normalise(callPath); strip ?query
-  1. exact = exactIndex.get(norm)      → O(1), return if found
-  2. k = segment count of norm
-  3. for ep in wildcardIndex.get(k):   → O(E_k)
-       if segmentsMatch(norm, ep): return ep
+
+  // Leading-wildcard stripping — MUST run before Level 3
+  // Handles env-var base URLs: ${REGISTRY}/services → /*/services
+  //   Python f-string:         {REGISTRY}/register  → /*/register
+  // Strip leading * segments first so /*/services finds /services, not
+  // a same-depth endpoint like /gateway/services via Level 3.
+  if norm starts with "/*":
+    stripped = strip leading wildcard segments (e.g. /*/services → /services)
+    if stripped ≠ norm and stripped ≠ "/":
+      results = findCandidatesForNorm(stripped)
+      if results not empty → return results (early exit)
+
+  return findCandidatesForNorm(norm)
+
+findCandidatesForNorm(norm):
+  Level 1: exact = exactIndex.get(norm)       → O(1)
+  Level 2: k = countSegments(norm)
+           for ep in wildcardIndex.get(k):    → O(E_k)
+             if segmentsMatch(norm, ep): add ep
+  Level 3: if results empty AND norm contains '*':
+             // call has wildcard but endpoint is exact (e.g. BASE_URL + static path)
+             for (path, ep) in exactIndex where countSegments(path)==k:
+               if segmentsMatch(norm, path): add ep
+  return results
 ```
+
+**Self-match exclusion in `buildDependencyEdges`:**
+Both step 1 (this repo's calls) and step 2 (retroactive re-link) skip any match where
+`matched.getRepo().getId() == callerRepo.getId()`. This prevents a service from being
+wired to its own endpoints when the true target repo is not yet scanned — the call stays
+UNRESOLVED and is re-linked once the target is scanned.
 
 #### Improvement
 

@@ -66,6 +66,11 @@ public final class PathSegmentIndex {
     /**
      * Return all endpoints whose path matches {@code callPath}.
      * The returned list is ordered: exact match first, then wildcard matches.
+     *
+     * <p>Also handles calls whose normalized pattern starts with one or more {@code *}
+     * segments that came from env-var substitution (e.g. {@code ${REGISTRY}/services}
+     * normalises to {@code /&#42;/services}, but the actual endpoint is at {@code /services}).
+     * We strip leading wildcard-only segments and retry so depth mismatches are resolved.
      */
     public List<ApiEndpoint> findCandidates(String callPath) {
         if (callPath == null || callPath.isBlank()) return List.of();
@@ -73,18 +78,58 @@ public final class PathSegmentIndex {
         String norm = stripQuery(normalisePath(callPath));
         List<ApiEndpoint> results = new ArrayList<>();
 
+        // If the path STARTS with a wildcard segment (env-var base-URL placeholder like
+        // ${REGISTRY} → normalised to /&#42;/services), strip the leading wildcard segments
+        // FIRST and try to match the remainder. This prevents Level-3 matching from
+        // picking up a wrong same-depth endpoint before stripping is attempted.
+        if (norm.startsWith("/*")) {
+            String stripped = stripLeadingWildcardSegments(norm);
+            if (!stripped.equals(norm) && !stripped.equals("/")) {
+                findCandidatesForNorm(stripped, results);
+                if (!results.isEmpty()) return results;
+            }
+        }
+
+        findCandidatesForNorm(norm, results);
+        return results;
+    }
+
+    private void findCandidatesForNorm(String norm, List<ApiEndpoint> results) {
         // Level 1: exact match O(1)
         ApiEndpoint exact = exactIndex.get(norm);
         if (exact != null) results.add(exact);
 
-        // Level 2: wildcard with same segment count O(E_k)
+        // Level 2: wildcard endpoint paths with same segment count O(E_k)
         int depth = countSegments(norm);
         for (ApiEndpoint ep : wildcardIndex.getOrDefault(depth, List.of())) {
             if (segmentsMatch(norm, normalisePath(ep.getPath()))) {
                 results.add(ep);
             }
         }
-        return results;
+
+        // Level 3: call has wildcard segments but endpoint is exact — check same-depth exact entries
+        if (results.isEmpty() && norm.contains("*")) {
+            for (Map.Entry<String, ApiEndpoint> entry : exactIndex.entrySet()) {
+                if (countSegments(entry.getKey()) == depth
+                        && segmentsMatch(norm, entry.getKey())) {
+                    results.add(entry.getValue());
+                }
+            }
+        }
+    }
+
+    /**
+     * Strip leading segments that are pure wildcards ({@code *}).
+     * e.g. {@code /&#42;/services} to {@code /services},
+     *      {@code /&#42;/&#42;/items} to {@code /items}.
+     * Stops as soon as a non-wildcard segment is encountered.
+     */
+    private static String stripLeadingWildcardSegments(String norm) {
+        String[] segs = split(norm);
+        int start = 0;
+        while (start < segs.length && "*".equals(segs[start])) start++;
+        if (start == 0 || start == segs.length) return norm;
+        return "/" + String.join("/", Arrays.copyOfRange(segs, start, segs.length));
     }
 
     // ─── normalisation helpers ────────────────────────────────────────────────

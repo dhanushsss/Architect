@@ -26,11 +26,18 @@ export function ScanStatusBadge({ status }: { status: string }) {
     COMPLETE: 'bg-green-500/20 text-green-400 border-green-500/30',
     SCANNING: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
     FAILED: 'bg-red-500/20 text-red-400 border-red-500/30',
-    PENDING: 'bg-slate-500/20 text-slate-400 border-slate-500/30'
+    PENDING: 'bg-slate-500/20 text-slate-400 border-slate-500/30',
+    RATE_LIMITED: 'bg-amber-500/20 text-amber-300 border-amber-500/35'
   }
   return (
-    <span className={clsx('text-xs font-medium px-1.5 py-0.5 rounded border', config[status] || config.PENDING)}>
-      {status === 'SCANNING' ? '⟳ Scanning...' : status}
+    <span className={clsx('text-xs font-medium px-1.5 py-0.5 rounded border inline-flex items-center gap-1', config[status] || config.PENDING)}>
+      {status === 'RATE_LIMITED' && (
+        <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 6v6l4 2" />
+        </svg>
+      )}
+      {status === 'SCANNING' ? '⟳ Scanning...' : status === 'RATE_LIMITED' ? 'Rate limit — retry later' : status}
     </span>
   )
 }

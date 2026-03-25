@@ -19,7 +19,7 @@ export function useGithubRepos() {
 export function useScanRepo() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: scanApi.triggerScan,
+    mutationFn: (repoId: number) => scanApi.triggerScan(repoId),
     onSuccess: () => {
       setTimeout(() => qc.invalidateQueries({ queryKey: ['repos'] }), 2000)
     }

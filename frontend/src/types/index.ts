@@ -15,7 +15,7 @@ export interface Repo {
   primaryLanguage: string | null
   htmlUrl: string
   isPrivate: boolean
-  scanStatus: 'PENDING' | 'SCANNING' | 'COMPLETE' | 'FAILED'
+  scanStatus: 'PENDING' | 'SCANNING' | 'COMPLETE' | 'FAILED' | 'RATE_LIMITED'
   lastScannedAt: string | null
   endpointCount: number
 }

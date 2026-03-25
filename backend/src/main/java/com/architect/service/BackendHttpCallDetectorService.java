@@ -179,9 +179,9 @@ public class BackendHttpCallDetectorService {
 
     // ─── Python: requests, httpx, aiohttp ────────────────────────────────────
 
-    /** requests.get('url'), httpx.post('url'), session.get('url') */
+    /** requests.get('url'), httpx.post('url'), session.get('url'), client.get(f"url") */
     private static final Pattern PY_REQUESTS = Pattern.compile(
-            "(?:requests|httpx|session|client)\\s*\\.\\s*(get|post|put|delete|patch)\\s*\\(\\s*([\"'])(.+?)\\2",
+            "(?:requests|httpx|session|client)\\s*\\.\\s*(get|post|put|delete|patch)\\s*\\(\\s*f?([\"'])(.+?)\\2",
             Pattern.CASE_INSENSITIVE);
 
     /** aiohttp: session.request('GET', 'url') */
@@ -222,7 +222,9 @@ public class BackendHttpCallDetectorService {
     private static boolean looksLikeUrl(String s) {
         if (s == null || s.isBlank()) return false;
         String t = s.trim();
-        return t.startsWith("http://") || t.startsWith("https://") || t.startsWith("/");
+        return t.startsWith("http://") || t.startsWith("https://") || t.startsWith("/")
+            || (t.startsWith("${") && t.contains("/"))   // JS/Java env-var: ${SERVICE_URL}/api/path
+            || (t.startsWith("{") && t.contains("/"));   // Python f-string: {REGISTRY}/register
     }
 
     private static String guessMethodJava(String line) {

@@ -76,7 +76,8 @@ function riskColor(risk: string | undefined): string {
 // ─── Fix 4: dagre layout ──────────────────────────────────────────────────
 function applyDagre(rawNodes: Node[], rawEdges: Edge[]): Node[] {
   const g = new dagre.graphlib.Graph()
-  g.setGraph({ rankdir: 'LR', ranksep: 150, nodesep: 55, edgesep: 25 })
+  // TB = top-to-bottom tree: services cascade downward by dependency level
+  g.setGraph({ rankdir: 'TB', ranksep: 110, nodesep: 70, edgesep: 20 })
   g.setDefaultEdgeLabel(() => ({}))
 
   rawNodes.forEach(n => {
@@ -159,8 +160,9 @@ function buildElements(
     })
   })
 
-  // Group endpoint nodes by URL prefix
-  const epNodes = visible.filter(n => n.type === 'API_ENDPOINT')
+  // Group endpoint nodes by URL prefix — only render when DEFINES filter is on
+  const showEndpoints = activeFilters.has('DEFINES')
+  const epNodes = showEndpoints ? visible.filter(n => n.type === 'API_ENDPOINT') : []
   const groups = new Map<string, GraphNode[]>()
   epNodes.forEach(n => {
     const key = groupKeyFor(n.data?.repoId, n.label)

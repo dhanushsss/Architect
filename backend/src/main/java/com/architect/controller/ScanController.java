@@ -3,12 +3,15 @@ package com.architect.controller;
 import com.architect.dto.ScanStatusDto;
 import com.architect.model.Repo;
 import com.architect.model.User;
+import com.architect.service.RepoScannerService.ScanMode;
 import com.architect.repository.ApiCallRepository;
 import com.architect.repository.ApiEndpointRepository;
 import com.architect.repository.ComponentImportRepository;
 import com.architect.repository.RepoRepository;
 import com.architect.service.RepoScannerService;
 import com.architect.service.ScanProgressService;
+
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -41,8 +44,14 @@ public class ScanController {
             .filter(r -> r.getUser().getId().equals(user.getId()))
             .orElseThrow(() -> new RuntimeException("Repo not found"));
 
-        RepoScannerService.ScanMode scanMode =
-            "quick".equalsIgnoreCase(mode) ? RepoScannerService.ScanMode.QUICK : RepoScannerService.ScanMode.DEEP;
+        RepoScannerService.ScanMode scanMode = resolveScanMode(mode);
+
+        if (scanMode == ScanMode.INCREMENTAL) {
+            Optional<ScanStatusDto> skip = repoScannerService.checkIncrementalNoOp(repo, user.getAccessToken());
+            if (skip.isPresent()) {
+                return ResponseEntity.ok(skip.get());
+            }
+        }
 
         repoScannerService.scanRepo(repo, user.getAccessToken(), scanMode);
 
@@ -54,14 +63,20 @@ public class ScanController {
             .build());
     }
 
+    private static RepoScannerService.ScanMode resolveScanMode(String mode) {
+        if (mode == null) return ScanMode.DEEP;
+        if ("quick".equalsIgnoreCase(mode)) return ScanMode.QUICK;
+        if ("incremental".equalsIgnoreCase(mode)) return ScanMode.INCREMENTAL;
+        return ScanMode.DEEP;
+    }
+
     /** Change 4 — ?mode=quick|deep applies to all repos */
     @PostMapping("/all")
     public ResponseEntity<List<ScanStatusDto>> scanAll(
             @AuthenticationPrincipal User user,
             @RequestParam(defaultValue = "deep") String mode) {
 
-        RepoScannerService.ScanMode scanMode =
-            "quick".equalsIgnoreCase(mode) ? RepoScannerService.ScanMode.QUICK : RepoScannerService.ScanMode.DEEP;
+        RepoScannerService.ScanMode scanMode = resolveScanMode(mode);
 
         List<ScanStatusDto> statuses = repoRepository.findByUser(user).stream().map(repo -> {
             repoScannerService.scanRepo(repo, user.getAccessToken(), scanMode);

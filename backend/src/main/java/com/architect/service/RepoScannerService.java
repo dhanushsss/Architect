@@ -1,5 +1,6 @@
 package com.architect.service;
 
+import com.architect.github.RateLimitExceededException;
 import com.architect.model.*;
 import com.architect.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -8,6 +9,10 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Duration;
+import java.time.Instant;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -35,8 +40,11 @@ public class RepoScannerService {
     private final RuntimeWiringFactRepository runtimeWiringFactRepository;
     private final RuntimeWiringExtractorService runtimeWiringExtractorService;
     private final BackendOutboundHostExtractor backendOutboundHostExtractor;
+    private final GitHubEtagCacheRepository githubEtagCacheRepository;
+    private final com.architect.github.GitHubRateLimitMonitor gitHubRateLimitMonitor;
+    private final TransactionTemplate transactionTemplate;
 
-    public enum ScanMode { QUICK, DEEP }
+    public enum ScanMode { QUICK, DEEP, INCREMENTAL }
 
     private static final Set<String> SCANNABLE_EXTENSIONS = Set.of(
         ".java", ".js", ".ts", ".jsx", ".tsx", ".py", ".rb", ".go",
@@ -62,17 +70,36 @@ public class RepoScannerService {
         Pattern.compile("(?i).*/index\\.(js|ts|py|rb|go)$")
     );
 
+    /** If HEAD matches stored SHA, skip scanning (caller returns 200 before queueing async work). */
+    public Optional<com.architect.dto.ScanStatusDto> checkIncrementalNoOp(Repo repo, String accessToken) {
+        String[] p = repo.getFullName().split("/");
+        String branch = repo.getDefaultBranch() != null ? repo.getDefaultBranch() : "main";
+        String head = gitHubService.getBranchHeadSha(accessToken, p[0], p[1], branch);
+        if (head != null && head.equals(repo.getLastScannedCommitSha())) {
+            return Optional.of(com.architect.dto.ScanStatusDto.builder()
+                    .repoId(repo.getId())
+                    .repoName(repo.getName())
+                    .status(Repo.ScanStatus.COMPLETE.name())
+                    .message("No changes since last scan")
+                    .build());
+        }
+        return Optional.empty();
+    }
+
     /** Convenience — defaults to DEEP scan */
     @Async
-    @Transactional
     public void scanRepo(Repo repo, String accessToken) {
         scanRepo(repo, accessToken, ScanMode.DEEP);
     }
 
+    /**
+     * Not a single long {@code @Transactional}: one huge transaction made Hibernate/Postgres slow on large scans.
+     * Clears are committed in a short transaction; per-entity saves use their own transactions.
+     */
     @Async
-    @Transactional
     @CacheEvict(value = {"graph", "riskOverview", "insights"}, key = "#repo.user.id")
     public void scanRepo(Repo repo, String accessToken, ScanMode mode) {
+        Instant scanStarted = Instant.now();
         log.info("Starting {} scan for repo: {}", mode, repo.getFullName());
         repo.setScanStatus(Repo.ScanStatus.SCANNING);
         repoRepository.save(repo);
@@ -81,11 +108,13 @@ public class RepoScannerService {
             Map.of("repo", repo.getName(), "mode", mode.name()));
 
         try {
-            clearPreviousScanData(repo);
+            transactionTemplate.executeWithoutResult(status -> clearPreviousScanData(repo));
 
             String[] parts = repo.getFullName().split("/");
             String owner = parts[0], repoName = parts[1];
             String branch = repo.getDefaultBranch() != null ? repo.getDefaultBranch() : "main";
+
+            String headSha = gitHubService.getBranchHeadSha(accessToken, owner, repoName, branch);
 
             // Build set of known repo names for MONOREPO import classification
             List<Repo> userRepos = repoRepository.findByUser(repo.getUser());
@@ -95,7 +124,24 @@ public class RepoScannerService {
                 knownRepoNames.add(r.getFullName());
             }
 
-            List<Map<String, Object>> tree = gitHubService.getRepoTree(accessToken, owner, repoName, branch);
+            List<Map<String, Object>> tree;
+            if (mode == ScanMode.INCREMENTAL && repo.getLastScannedCommitSha() != null && !repo.getLastScannedCommitSha().isBlank()
+                    && headSha != null) {
+                List<Map<String, Object>> cmp = gitHubService.compareCommits(
+                        accessToken, owner, repoName, repo.getLastScannedCommitSha(), headSha);
+                tree = new ArrayList<>();
+                for (Map<String, Object> f : cmp) {
+                    String path = (String) f.get("filename");
+                    if (path == null) continue;
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("type", "blob");
+                    item.put("path", path);
+                    tree.add(item);
+                }
+                log.info("Incremental compare: {} changed paths for {}", tree.size(), repo.getFullName());
+            } else {
+                tree = gitHubService.getRepoTree(accessToken, repo, owner, repoName, branch);
+            }
 
             // Change 3 — priority files (controllers, routers, api files) bubble to top
             List<Map<String, Object>> sorted = sortByPriority(tree);
@@ -117,7 +163,8 @@ public class RepoScannerService {
                 // Change 4 — QUICK mode: skip config/import-heavy files
                 if (mode == ScanMode.QUICK && isDeepOnlyFile(path)) continue;
 
-                String content = gitHubService.getFileContent(accessToken, owner, repoName, path);
+                gitHubRateLimitMonitor.maybeThrottleAfterRequest();
+                String content = gitHubService.getFileContent(accessToken, repo, owner, repoName, path);
                 if (content.isBlank()) continue;
 
                 var extractedEndpoints = endpointExtractor.extract(content, path);
@@ -159,8 +206,8 @@ public class RepoScannerService {
                     }
                 }
 
-                // DEEP only: imports + config refs
-                if (mode == ScanMode.DEEP) {
+                // DEEP / INCREMENTAL: imports + config refs
+                if (mode == ScanMode.DEEP || mode == ScanMode.INCREMENTAL) {
                     for (var imp : importTracer.detect(content, path, repoName, knownRepoNames)) {
                         componentImportRepository.save(ComponentImport.builder()
                             .sourceRepo(repo).importPath(imp.getImportPath())
@@ -220,10 +267,15 @@ public class RepoScannerService {
                 }
             }
 
-            buildDependencyEdges(repo, mode);
+            ScanMode edgeMode = mode == ScanMode.INCREMENTAL ? ScanMode.DEEP : mode;
+            buildDependencyEdges(repo, edgeMode);
+            logScanQualityMetrics(repo, processed);
 
             repo.setScanStatus(Repo.ScanStatus.COMPLETE);
             repo.setLastScannedAt(LocalDateTime.now());
+            if (headSha != null) {
+                repo.setLastScannedCommitSha(headSha);
+            }
             repoRepository.save(repo);
 
             scanProgressService.emit(repo.getId(), "complete", Map.of(
@@ -232,13 +284,21 @@ public class RepoScannerService {
                 "mode", mode.name()
             ));
             scanProgressService.complete(repo.getId());
-            log.info("{} scan complete for {}: {} endpoints", mode, repo.getFullName(), endpoints.size());
+            log.info("{} scan complete for {}: {} endpoints in {} ({} files)",
+                mode, repo.getFullName(), endpoints.size(),
+                Duration.between(scanStarted, Instant.now()), processed);
 
-        } catch (Exception e) {
+        } catch (RateLimitExceededException e) {
+            log.warn("GitHub rate limit for {} — reset {}", repo.getFullName(), e.getResetAt());
+            repo.setScanStatus(Repo.ScanStatus.RATE_LIMITED);
+            repoRepository.save(repo);
+            scanProgressService.emit(repo.getId(), "failed", Map.of("error", "github_rate_limit", "reset", String.valueOf(e.getResetAt())));
+            scanProgressService.complete(repo.getId());
+        } catch (Throwable e) {
             log.error("Scan failed for {}: {}", repo.getFullName(), e.getMessage(), e);
             repo.setScanStatus(Repo.ScanStatus.FAILED);
             repoRepository.save(repo);
-            scanProgressService.emit(repo.getId(), "failed", Map.of("error", e.getMessage()));
+            scanProgressService.emit(repo.getId(), "failed", Map.of("error", String.valueOf(e.getMessage())));
             scanProgressService.complete(repo.getId());
         }
     }
@@ -268,6 +328,7 @@ public class RepoScannerService {
     // ── internals ─────────────────────────────────────────────────────────────
 
     private void clearPreviousScanData(Repo repo) {
+        githubEtagCacheRepository.deleteByRepo(repo);
         apiEndpointRepository.deleteByRepo(repo);
         apiCallRepository.deleteByCallerRepo(repo);
         componentImportRepository.deleteBySourceRepo(repo);
@@ -292,6 +353,12 @@ public class RepoScannerService {
                 continue;
             }
             ApiEndpoint matched = matchCallToEndpoint(call, index);
+            // Skip self-matches: a service should not be wired to its own endpoints.
+            // Leave them UNRESOLVED so step 2 (retro-link) can correctly match them
+            // once the target service is scanned and its endpoints are in the index.
+            if (matched != null && matched.getRepo().getId().equals(repo.getId())) {
+                matched = null;
+            }
             if (matched != null) {
                 call.setEndpoint(matched);
                 call.setTargetKind(ApiCallUrlNormalizer.KIND_INTERNAL);
@@ -322,12 +389,14 @@ public class RepoScannerService {
                 continue;
             }
             ApiEndpoint matched = matchCallToEndpoint(call, index);
-            if (matched != null) {
+            // Exclude same-repo matches (caller's own endpoints) — leave as UNRESOLVED
+            // so a later scan with the actual target repo present can link correctly.
+            if (matched != null && !matched.getRepo().getId().equals(call.getCallerRepo().getId())) {
                 call.setEndpoint(matched);
                 call.setTargetKind(ApiCallUrlNormalizer.KIND_INTERNAL);
                 apiCallRepository.save(call);
-                log.debug("Retroactively linked {} → {}/{}", call.getCallerRepo().getName(),
-                        matched.getRepo().getName(), matched.getPath());
+                log.debug("Retroactively linked callerRepo={} → endpoint id={} path={}",
+                        call.getCallerRepo().getId(), matched.getId(), matched.getPath());
             }
         }
 
@@ -447,14 +516,51 @@ public class RepoScannerService {
             callPath = ApiCallUrlNormalizer.normalizeForMatching(call.getUrlPattern());
         }
         List<ApiEndpoint> candidates = index.findCandidates(callPath);
-        if (candidates.isEmpty()) return null;
+        if (candidates.isEmpty()) {
+            log.debug("Unresolved call: no endpoint candidates callerRepo={} method={} raw={} normalized={} file={}:{}",
+                    call.getCallerRepo() != null ? call.getCallerRepo().getId() : "?",
+                    call.getHttpMethod(), call.getUrlPattern(), callPath, call.getFilePath(), call.getLineNumber());
+            return null;
+        }
         String method = call.getHttpMethod();
         if (method != null && !method.isBlank()) {
             for (ApiEndpoint ep : candidates) {
                 if (method.equalsIgnoreCase(ep.getHttpMethod())) return ep;
             }
+            log.debug("Unresolved call: method mismatch callerRepo={} method={} normalized={} candidates={} sampleMethods={}",
+                    call.getCallerRepo() != null ? call.getCallerRepo().getId() : "?",
+                    method, callPath, candidates.size(),
+                    candidates.stream().map(ApiEndpoint::getHttpMethod).distinct().limit(4).toList());
+            return null;
         }
         return candidates.get(0);
+    }
+
+    private void logScanQualityMetrics(Repo repo, int processedFiles) {
+        List<ApiCall> calls = apiCallRepository.findByCallerRepo(repo);
+        int total = calls.size();
+        int unresolved = 0;
+        int internal = 0;
+        for (ApiCall c : calls) {
+            if (ApiCallUrlNormalizer.KIND_UNRESOLVED.equals(c.getTargetKind()) || c.getEndpoint() == null) {
+                unresolved++;
+            } else if (ApiCallUrlNormalizer.KIND_INTERNAL.equals(c.getTargetKind())) {
+                internal++;
+            }
+        }
+        int external = Math.max(0, total - unresolved - internal);
+        double unresolvedPct = total == 0 ? 0.0 : (unresolved * 100.0 / total);
+        double matchedPct = total == 0 ? 100.0 : (internal * 100.0 / total);
+
+        List<Repo> userRepos = repoRepository.findByUser(repo.getUser());
+        long complete = userRepos.stream().filter(r -> r.getScanStatus() == Repo.ScanStatus.COMPLETE).count();
+        long totalRepos = userRepos.size();
+
+        log.info("Scan quality repo={} filesProcessed={} callsTotal={} matchedInternal={} external={} unresolved={} unresolvedPct={} matchedPct={} reposScanned={}/{}",
+                repo.getFullName(), processedFiles, total, internal, external, unresolved,
+                String.format(Locale.ROOT, "%.1f", unresolvedPct),
+                String.format(Locale.ROOT, "%.1f", matchedPct),
+                complete, totalRepos);
     }
 
     private Repo matchRepo(String importPath, List<Repo> repos) {
@@ -480,6 +586,14 @@ public class RepoScannerService {
             return true;
         }
         if (l.endsWith("application.properties") || l.endsWith("bootstrap.properties")) {
+            return true;
+        }
+        // Node.js server/gateway entry files for routing map detection
+        String filename = l.contains("/") ? l.substring(l.lastIndexOf('/') + 1) : l;
+        if (filename.equals("server.js") || filename.equals("server.ts") || filename.equals("server.mjs")
+                || filename.equals("gateway.js") || filename.equals("gateway.ts")
+                || filename.equals("index.js") || filename.equals("index.ts")
+                || filename.equals("app.js") || filename.equals("app.ts")) {
             return true;
         }
         if (!(l.endsWith(".yml") || l.endsWith(".yaml"))) {

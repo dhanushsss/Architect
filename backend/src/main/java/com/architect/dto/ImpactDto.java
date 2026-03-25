@@ -35,6 +35,18 @@ public class ImpactDto {
     /** 0–100 how much to trust this analysis (graph freshness, match quality) */
     private Double confidenceScore;
 
+    /** UNRESOLVED outbound calls from affected repos (PR confidence deduction). */
+    private Integer unresolvedCallCount;
+
+    /** Repos in the analyzed scope with last scan older than 48h. */
+    private Integer staleRepoCount;
+
+    /** Repos in the analyzed scope that have never been scanned. */
+    private Integer unscannedRepoCount;
+
+    /** Changed files in PR that were not fetched at PR head for extraction. */
+    private Integer changedFilesNotFetched;
+
     /** Phase 2 — human-readable “why risky” bullets for PR comment + UI */
     private List<String> riskFactors;
 

@@ -6,6 +6,7 @@ import com.architect.repository.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -290,6 +291,20 @@ public class ImpactAnalysisService {
             risk = computeRisk(affectedRepoIds.size(), affectedFiles.size(), epCount);
         }
 
+        Set<Long> reposForConfidence = new LinkedHashSet<>();
+        reposForConfidence.add(repo.getId());
+        for (String rid : affectedRepoIds) {
+            try {
+                reposForConfidence.add(Long.parseLong(rid));
+            } catch (NumberFormatException ignored) {
+                // skip
+            }
+        }
+        int unresolved = reposForConfidence.isEmpty() ? 0
+                : (int) apiCallRepository.countByCallerRepoIdInAndTargetKind(
+                        reposForConfidence, ApiCallUrlNormalizer.KIND_UNRESOLVED);
+        int confidence = computeGraphConfidence(reposForConfidence, unresolved);
+
         return ImpactDto.builder()
             .subjectId(String.valueOf(repo.getId()))
             .subjectType("REPO")
@@ -302,7 +317,40 @@ public class ImpactAnalysisService {
             .affectedFiles(affectedFiles)
             .changedEndpoints(new ArrayList<>(changedEpLabels))
             .prOrphanEndpoints(new ArrayList<>(prOrphanEndpoints))
+            .confidenceScore((double) confidence)
+            .unresolvedCallCount(unresolved)
             .build();
+    }
+
+    /**
+     * Base 100; −20 per UNRESOLVED call in affected repos (cap −40); −15 if any repo scan older than 48h;
+     * −10 if any affected repo is not COMPLETE.
+     */
+    private int computeGraphConfidence(Set<Long> repoIds, int unresolvedCallCount) {
+        int c = 100;
+        c -= Math.min(20 * unresolvedCallCount, 40);
+        boolean stale = false;
+        boolean incomplete = false;
+        for (Long rid : repoIds) {
+            Repo r = repoRepository.findById(rid).orElse(null);
+            if (r == null) {
+                continue;
+            }
+            if (r.getLastScannedAt() == null
+                    || r.getLastScannedAt().isBefore(LocalDateTime.now().minusHours(48))) {
+                stale = true;
+            }
+            if (r.getScanStatus() != Repo.ScanStatus.COMPLETE) {
+                incomplete = true;
+            }
+        }
+        if (stale) {
+            c -= 15;
+        }
+        if (incomplete) {
+            c -= 10;
+        }
+        return Math.max(0, Math.min(100, c));
     }
 
     private boolean endpointHasExternalCallers(ApiEndpoint ep, Long sourceRepoId) {
@@ -346,15 +394,9 @@ public class ImpactAnalysisService {
      *   - changed endpoint count (each endpoint = 0.5 pts, max 1.5)
      */
     private RiskResult computeRisk(int repoCount, int fileCount, int endpointCount) {
-        double score = Math.min(repoCount  * 2.0,  6.0)
-                     + Math.min(fileCount  * 0.3,  2.5)
-                     + Math.min(endpointCount * 0.5, 1.5);
-        score = Math.round(score * 10.0) / 10.0; // 1 decimal place
-
-        String label   = score >= 6.0 ? "HIGH" : score >= 3.0 ? "MEDIUM" : "LOW";
-        String verdict = score >= 7.0 ? "BLOCKED"
-                       : score >= 4.0 ? "REVIEW REQUIRED"
-                       : "SAFE TO MERGE";
+        double score = ImpactRiskScoring.rawScore(repoCount, fileCount, endpointCount);
+        String label = ImpactRiskScoring.label(score);
+        String verdict = ImpactRiskScoring.verdict(score);
         return new RiskResult(score, label, verdict);
     }
 

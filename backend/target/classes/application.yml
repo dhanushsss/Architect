@@ -31,6 +31,7 @@ app:
     client-id: ${GITHUB_CLIENT_ID}
     client-secret: ${GITHUB_CLIENT_SECRET}
     redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:8080/api/auth/callback}
+    webhook-secret: ${GITHUB_WEBHOOK_SECRET:}
   jwt:
     secret: ${JWT_SECRET:architect-secret-key-change-in-production-must-be-256-bits-long}
     expiration-ms: ${JWT_EXPIRATION_MS:86400000}

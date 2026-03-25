@@ -3,33 +3,7 @@ package com.architect.service;
 import java.net.URI;
 import java.util.Set;
 
-/**
- * Normalizes detected URL patterns for endpoint matching and classifies calls as
- * INTERNAL_ENDPOINT, UNRESOLVED, or EXTERNAL.
- *
- * <h2>Internal vs External classification</h2>
- * <pre>
- * EXTERNAL   — public host with a real TLD: api.stripe.com, graph.facebook.com
- * UNRESOLVED — relative path (/api/users) OR internal service URL (http://user-service:8080/api)
- *              → will be matched against known endpoints via PathSegmentIndex
- * </pre>
- *
- * <h2>Why the old code was wrong</h2>
- * The previous implementation treated every {@code http://} URL as EXTERNAL.
- * This caused cross-service calls like {@code http://catalog-service:3001/api/properties}
- * (Docker/Kubernetes internal service name, no public TLD) to be discarded instead of
- * matched against the target service's scanned endpoints.
- *
- * <h2>Decision tree for isExternalAbsoluteUrl</h2>
- * <pre>
- *   starts with http/https?
- *   └─ yes → extract host
- *             ├─ no dots in host (catalog-service, user-api)  → false (INTERNAL service name)
- *             ├─ localhost / 127.x.x.x / 0.0.0.0              → false (local dev)
- *             ├─ raw IPv4 address                              → false (private network)
- *             └─ host has a known public TLD (.com/.io/…)     → true  (EXTERNAL)
- * </pre>
- */
+/** Normalizes URL patterns and classifies outbound calls. */
 public final class ApiCallUrlNormalizer {
 
     public static final String KIND_EXTERNAL   = "EXTERNAL";
@@ -45,13 +19,7 @@ public final class ApiCallUrlNormalizer {
 
     private ApiCallUrlNormalizer() {}
 
-    /**
-     * Returns {@code true} ONLY for URLs that point to a publicly routable external host.
-     *
-     * <p>Internal Docker/K8s service names like {@code http://catalog-service:3001/path}
-     * return {@code false} — they are treated as UNRESOLVED internal calls and matched
-     * against scanned endpoints via {@link PathSegmentIndex}.
-     */
+    /** True only for public absolute hosts (not localhost/internal service names). */
     public static boolean isExternalAbsoluteUrl(String raw) {
         if (raw == null) return false;
         String t = raw.trim().toLowerCase();
@@ -83,27 +51,7 @@ public final class ApiCallUrlNormalizer {
         return extractHostOnly(absoluteUrl.trim().toLowerCase());
     }
 
-    /**
-     * Normalize a URL pattern for endpoint matching.
-     *
-     * <p>Steps applied in order:
-     * <ol>
-     *   <li>If absolute URL (http/https) → extract path portion only:<br>
-     *       {@code http://catalog-service:3001/api/properties} → {@code /api/properties}</li>
-     *   <li>Strip query string</li>
-     *   <li>Replace template expressions ({@code ${userId}}, {@code $id}) and
-     *       path variables ({@code {id}}) with {@code *}</li>
-     *   <li>Collapse duplicate slashes and trailing slash</li>
-     *   <li>Ensure leading slash</li>
-     * </ol>
-     *
-     * Examples:
-     * <pre>
-     *   http://catalog-service:3001/api/properties  → /api/properties
-     *   /api/users/${userId}/orders                 → /api/users/*/orders
-     *   /api/items/?page=1                          → /api/items
-     * </pre>
-     */
+    /** Converts URL/path values into a normalized path used for endpoint matching. */
     public static String normalizeForMatching(String raw) {
         if (raw == null || raw.isBlank()) return "";
         String s = raw.trim();

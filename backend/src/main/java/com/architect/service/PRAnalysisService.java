@@ -57,7 +57,7 @@ public class PRAnalysisService {
                 for (String path : changedPaths) {
                     if (prHeadContents.size() >= max) break;
                     if (!isScannable(path)) continue;
-                    String content = gitHubService.getFileContentAtRef(token, owner, repoName, path, headSha);
+                    String content = gitHubService.getFileContentAtRef(token, repo, owner, repoName, path, headSha);
                     if (!content.isBlank()) {
                         prHeadContents.put(path, content);
                     }

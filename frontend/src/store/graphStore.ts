@@ -23,8 +23,8 @@ export const useGraphStore = create<GraphStore>((set) => ({
   focusedNodeId: null,
   setFocusedNodeId: (id) => set({ focusedNodeId: id }),
 
-  // Defines + Calls + Imports on; Reads optional (config edges)
-  activeFilters: new Set(['CALLS', 'DEFINES', 'IMPORTS', 'WIRED']),
+  // Default: service-to-service tree view — toggle "Endpoints" to expand groups
+  activeFilters: new Set(['CALLS', 'WIRED', 'IMPORTS']),
   toggleFilter: (filter) => set(state => {
     const next = new Set(state.activeFilters)
     if (next.has(filter)) next.delete(filter)

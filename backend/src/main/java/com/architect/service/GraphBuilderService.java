@@ -23,7 +23,7 @@ public class GraphBuilderService {
     private final RuntimeWiringGraphService runtimeWiringGraphService;
 
     @Cacheable(value = "graph", key = "#user.id")
-    @Transactional(readOnly = true)
+    @Transactional
     public GraphDto buildGraph(User user) {
         List<Repo> repos = repoRepository.findByUserOrderByNameAsc(user);
         List<NodeDto> nodes = new ArrayList<>();

@@ -25,7 +25,8 @@
 - [Versioning & releases](docs/VERSIONING.md) — **current: 1.1.0**
 - [E2E & testing analysis](docs/E2E_AND_TESTING.md) — manual flow vs automated gaps
 - [API call detection → CALL edges](docs/API_CALL_DETECTION.md) — cross-repo graph + EXTERNAL
-- [Runtime URL wiring](docs/RUNTIME_WIRING.md) — gateway, Vite proxy, Eureka (no Git coupling)
+- [Runtime URL wiring](docs/RUNTIME_WIRING.md) — gateway, Vite proxy, Node.js routing maps, Python f-strings
+- [Bug fixes log](docs/BUGFIXES.md) — 11 root-cause fixes: endpoint extraction, scan error handling, graph matching, wiring detection
 
 ---
 
@@ -35,7 +36,7 @@
 
 | Area | What it does |
 |------|----------------|
-| **Discovery** | Connect GitHub repos (OAuth). **Deep scan:** API endpoints, frontend API calls, **component imports** (classified INTERNAL / MONOREPO / EXTERNAL, with `resolvedFile` where applicable), **config** references, then cross-repo resolution. **Quick scan:** endpoints + API calls only; skips config-style files (`.yaml`, `.yml`, `.xml`, `.properties`, `.json`) and does **not** collect imports/config or build **IMPORTS** edges. Priority order: controllers, routers, API files first. **SSE** progress stream during scan. |
+| **Discovery** | Connect GitHub repos (OAuth). **Deep scan:** API endpoints (Java Spring Boot, Node.js Express, Python FastAPI/Flask, Ruby, Go), frontend API calls, backend inter-service HTTP calls (Java, Node.js, Python — including f-string URLs), **component imports** (INTERNAL / MONOREPO / EXTERNAL), **config** references, **runtime wiring facts** (Spring Cloud Gateway routes, Vite proxy, Node.js routing maps, Feign clients). **Quick scan:** endpoints + API calls only; no imports/config/wiring. Priority: controllers, routers, API files first. **SSE** progress stream during scan. |
 | **Graph & trace** | Interactive dependency graph (repos, API endpoints, edges: defines / calls / imports). **Package tree** per repo (component imports grouped by package). **Import trace** per file: what a file imports and where those components are used. |
 | **Impact & risk** | **Per endpoint/repo** and **dashboard** overview. **Real-time PR engine:** on `pull_request` (opened/updated), **async** pipeline — list changed files → **targeted scan** (PR head content only, capped file count) → extract APIs → match **existing graph** → aggregate cross-repo callers → **PR comment** + optional **GitHub commit status** (merge block) + **Slack**. See [Real-time PR engine](#real-time-pr-engine) and [`docs/PR_ENGINE.md`](docs/PR_ENGINE.md). |
 | **AI (Anthropic)** | **Query** (NL over graph), **chat**, **docs** per repo, **onboard** trace—all **SSE**. **Anomalies**, **tech-debt**, **history**. If `ANTHROPIC_API_KEY` is unset, streaming endpoints return **demo/mock** content; GET endpoints still run. |
@@ -99,7 +100,19 @@ export FRONTEND_URL=http://localhost:3000
 # Or: mvn spring-boot:run
 ```
 
-Backend runs at **http://localhost:8080**. Flyway runs on startup: **`V1__init.sql`** (core schema), **`V2__ai_enterprise.sql`** (AI, orgs, snapshots, audit, API keys), **`V3__component_enrichment.sql`** (`component_imports.import_type`, `resolved_file`; `dependency_edges` import metadata + indexes).
+Backend runs at **http://localhost:8080**. Flyway runs on startup automatically:
+
+| Migration | What it adds |
+|-----------|--------------|
+| V1 | Core schema: users, repos, api_endpoints, api_calls, dependency_edges |
+| V2 | AI, orgs, snapshots, audit logs, API keys |
+| V3 | component_imports: import_type, resolved_file; dependency_edges indexes |
+| V4 | pr_analyses, pr_analysis_runs |
+| V5 | api_calls: normalized_pattern, target_kind, external_host |
+| V6 | runtime_wiring_facts |
+| V7 | runtime_wiring_warnings |
+| V8 | github_etag_cache (ETag-based conditional GitHub API fetches) |
+| V9 | repos: last_scanned_commit_sha (incremental scan support) |
 
 ### 3. Frontend
 
@@ -156,6 +169,10 @@ Full plan: **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
 
 ## How to Test It
 
+### Demo polyglot stack (`Micro/`)
+
+The repo includes **six sample Git projects** under [`Micro/`](Micro/) (registry, gateway, UI, booking-service, user-service, catalog-service). They use **explicit HTTP** between services so Architect can show **cross-repo CALL** edges after you connect each GitHub repo and run a **deep** scan. Step-by-step: [`Micro/ARCHITECT_TESTING.md`](Micro/ARCHITECT_TESTING.md).
+
 ### Manual (UI) flow
 
 1. **Login**  
@@ -168,17 +185,17 @@ Full plan: **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
 
 3. **Scan**  
    - From dashboard: default is **deep** (see [Scan modes](#scan-modes-quick-vs-deep)). API also supports `?mode=quick`.  
-   - Async scan clears prior repo data, fetches GitHub tree (priority files first), then extracts per mode. Poll `GET /api/scan/{repoId}/status` or **SSE** `GET /api/scan/{repoId}/stream` for events (`start`, `files_found`, `progress`, `endpoint_found`, `complete`, `failed`). Status leaves `SCANNING` when done.
+   - Async scan clears prior repo data, fetches GitHub tree (priority files first), then extracts per mode. Poll `GET /api/v1/scan/{repoId}/status` or **SSE** `GET /api/v1/scan/{repoId}/stream` for events (`start`, `files_found`, `progress`, `endpoint_found`, `complete`, `failed`). Status leaves `SCANNING` when done.
 
 4. **Graph**  
    - Go to **Graph** page.  
-   - Loads `/api/graph` (nodes: repos + API endpoints; edges: defines, calls, imports).  
-   - Optional: `/api/graph/tree/{repoId}` for a package-grouped component tree; `/api/graph/trace?repoId=&file=` for import trace (what a file imports and where components are used).  
+   - Loads `/api/v1/graph` (nodes: repos + API endpoints; edges: defines, calls, imports).  
+   - Optional: `/api/v1/graph/tree/{repoId}` for a package-grouped component tree; `/api/v1/graph/trace?repoId=&file=` for import trace (what a file imports and where components are used).  
    - Use filters and click nodes to see details and navigate to impact.
 
 5. **Impact**  
-   - Dashboard can show a risk overview via `GET /api/impact/overview` (risk cards per repo, sorted by risk).  
-   - From graph or links: open impact for an endpoint or repo via `/api/impact/endpoint/:id` or `/api/impact/repo/:id`.
+   - Dashboard can show a risk overview via `GET /api/v1/impact/overview` (risk cards per repo, sorted by risk).  
+   - From graph or links: open impact for an endpoint or repo via `/api/v1/impact/endpoint/:id` or `/api/v1/impact/repo/:id`.
 
 6. **AI (optional)**  
    - **AI** page: anomalies, tech-debt, history; generate docs for a repo.  
@@ -206,8 +223,8 @@ There are **no** Java tests under `src/test` yet and **no** Playwright/Cypress E
   ```bash
   export TOKEN="<jwt_from_login>"
   curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/auth/me
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/repos
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/graph
+  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/repos
+  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/graph
   ```
 - **With API key** (public API; use `X-API-Key` header):
   ```bash
@@ -245,22 +262,22 @@ All endpoints under `/api` unless noted. **Auth:** JWT = `Authorization: Bearer 
 | GET | `/api/auth/callback?code=...` | — | OAuth callback; redirects to frontend with `?token=<jwt>` |
 | GET | `/api/auth/me` | JWT | Current user (id, login, name, avatarUrl) |
 | **Repos** | | | |
-| GET | `/api/repos` | JWT | List connected repos |
-| GET | `/api/repos/github` | JWT | List user's GitHub repos (to connect) |
-| POST | `/api/repos/connect` | JWT | Connect repo (body: githubId, fullName, name, language, defaultBranch, htmlUrl, private, description) |
-| DELETE | `/api/repos/{repoId}` | JWT | Disconnect repo |
+| GET | `/api/v1/repos` | JWT | List connected repos |
+| GET | `/api/v1/repos/github` | JWT | List user's GitHub repos (to connect) |
+| POST | `/api/v1/repos/connect` | JWT | Connect repo (body: githubId, fullName, name, language, defaultBranch, htmlUrl, private, description) |
+| DELETE | `/api/v1/repos/{repoId}` | JWT | Disconnect repo |
 | **Scan** | | | |
-| POST | `/api/scan/{repoId}` | JWT | Start async scan for one repo. Optional `?mode=quick` or `?mode=deep` (default: deep) |
-| POST | `/api/scan/all` | JWT | Start async scan for all user repos. Optional `?mode=quick` or `?mode=deep` |
-| GET | `/api/scan/{repoId}/stream` | JWT | SSE stream: live scan progress events for the repo |
-| GET | `/api/scan/{repoId}/status` | JWT | Scan status + endpoint/call/import counts |
+| POST | `/api/v1/scan/{repoId}` | JWT | Start async scan for one repo. Optional `?mode=quick` or `?mode=deep` (default: deep) |
+| POST | `/api/v1/scan/all` | JWT | Start async scan for all user repos. Optional `?mode=quick` or `?mode=deep` |
+| GET | `/api/v1/scan/{repoId}/stream` | JWT | SSE stream: live scan progress events for the repo |
+| GET | `/api/v1/scan/{repoId}/status` | JWT | Scan status + endpoint/call/import counts |
 | **Graph & Impact** | | | |
-| GET | `/api/graph` | JWT | Full dependency graph (nodes + edges) |
-| GET | `/api/graph/tree/{repoId}` | JWT | Package-grouped tree of components for a repo (tree, totalImports, byType) |
-| GET | `/api/graph/trace?repoId=&file=` | JWT | Origin trace: imports in a file + where each component is used (imports, usedBy) |
-| GET | `/api/impact/endpoint/{endpointId}` | JWT | Impact for an API endpoint (numeric id) |
-| GET | `/api/impact/repo/{repoId}` | JWT | Impact for a repo (numeric id) |
-| GET | `/api/impact/overview` | JWT | Risk overview: lightweight risk cards for all scanned repos (sorted by risk, for dashboard) |
+| GET | `/api/v1/graph` | JWT | Full dependency graph (nodes + edges) |
+| GET | `/api/v1/graph/tree/{repoId}` | JWT | Package-grouped tree of components for a repo (tree, totalImports, byType) |
+| GET | `/api/v1/graph/trace?repoId=&file=` | JWT | Origin trace: imports in a file + where each component is used (imports, usedBy) |
+| GET | `/api/v1/impact/endpoint/{endpointId}` | JWT | Impact for an API endpoint (numeric id) |
+| GET | `/api/v1/impact/repo/{repoId}` | JWT | Impact for a repo (numeric id) |
+| GET | `/api/v1/impact/overview` | JWT | Risk overview: lightweight risk cards for all scanned repos (sorted by risk, for dashboard) |
 | **AI** (Anthropic; SSE = streaming) | | | |
 | POST | `/api/ai/query` | JWT | NL query over graph (SSE); body: `{ "question": "..." }` |
 | POST | `/api/ai/chat` | JWT | Chat (SSE); body: `{ "message": "..." }` |
@@ -306,16 +323,16 @@ All endpoints under `/api` unless noted. **Auth:** JWT = `Authorization: Bearer 
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 2. CONNECT REPOS                                                             │
-│    GET /api/repos/github (list GitHub repos)                                 │
-│    POST /api/repos/connect (connect repo by githubId, fullName, etc.)        │
+│    GET /api/v1/repos/github (list GitHub repos)                               │
+│    POST /api/v1/repos/connect (connect repo by githubId, fullName, etc.)      │
 │    Repos stored per user (and optionally org_id).                            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                         │
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 3. SCAN (async)                                                              │
-│    POST /api/scan/{repoId}?mode=quick|deep (default deep). Same for /all.    │
-│    SSE: GET /api/scan/{repoId}/stream.                                       │
+│    POST /api/v1/scan/{repoId}?mode=quick|deep (default deep). Same for /all.  │
+│    SSE: GET /api/v1/scan/{repoId}/stream.                                     │
 │    DEEP: all scannable extensions; imports + config; IMPORTS edges + meta. │
 │    QUICK: skips .yaml/.yml/.xml/.properties/.json; no imports/config;       │
 │    CALLS edges only. Priority: *controller*, *router*, *api*, etc. first.    │
@@ -326,8 +343,8 @@ All endpoints under `/api` unless noted. **Auth:** JWT = `Authorization: Bearer 
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 4. GRAPH                                                                     │
-│    GET /api/graph — full graph. GET /api/graph/tree/{repoId} — component     │
-│    tree per repo. GET /api/graph/trace?repoId=&file= — imports + usedBy.     │
+│    GET /api/v1/graph — full graph. GET /api/v1/graph/tree/{repoId} — component│
+│    tree per repo. GET /api/v1/graph/trace?repoId=&file= — imports + usedBy.   │
 │    GraphBuilderService: nodes (REPO, API_ENDPOINT), edges (DEFINES, CALLS,    │
 │    IMPORTS). Frontend: @xyflow/react; filters and node details.               │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -335,8 +352,8 @@ All endpoints under `/api` unless noted. **Auth:** JWT = `Authorization: Bearer 
                                         ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 5. IMPACT                                                                    │
-│    GET /api/impact/overview — risk cards for all scanned repos (dashboard).  │
-│    GET /api/impact/endpoint/{id} or GET /api/impact/repo/{id} — full impact  │
+│    GET /api/v1/impact/overview — risk cards for all scanned repos (dashboard).│
+│    GET /api/v1/impact/endpoint/{id} or GET /api/v1/impact/repo/{id} — full impact│
 │    for one endpoint or repo (callers/consumers affected).                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -412,7 +429,7 @@ The **React app** (`frontend/src/services/api.ts`) calls:
 
 | Client helper | Backend | Notes |
 |---------------|---------|--------|
-| `authApi`, `repoApi` | `/api/auth/*`, `/api/repos/*` | — |
+| `authApi`, `repoApi` | `/api/auth/*`, `/api/v1/repos/*` | — |
 | `scanApi.triggerScan` / `scanAll` | `POST /scan/{id}`, `POST /scan/all` | **No `?mode=`** → backend default **deep** |
 | `scanApi.getStatus` | `GET /scan/{id}/status` | Does not use SSE stream |
 | `graphApi` | `/graph`, `/graph/tree/{id}`, `/graph/trace` | — |
@@ -420,7 +437,7 @@ The **React app** (`frontend/src/services/api.ts`) calls:
 | `aiApi` | GET anomalies, tech-debt, history; POST docs (SSE) | **Not wired in api.ts:** `/ai/query`, `/ai/chat`, `/ai/onboard` (available via curl/UI if added) |
 | `enterpriseApi`, `apiKeyApi` | `/enterprise/*`, `/keys` | — |
 
-To use **quick scan** or **SSE** from scripts, call the API directly with `?mode=quick` or open an EventSource to `/api/scan/{repoId}/stream` with JWT.
+To use **quick scan** or **SSE** from scripts, call the API directly with `?mode=quick` or open an EventSource to `/api/v1/scan/{repoId}/stream` with JWT.
 
 ---
 

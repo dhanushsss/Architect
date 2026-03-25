@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Component
 public class RateLimitInterceptor implements HandlerInterceptor {
 
-    static final int  LIMIT     = 300;
+    public static final int LIMIT = 300;
     static final long WINDOW_MS = 60_000L;
 
     /** Identity → current window bucket. Entries are implicitly evicted when window expires. */

@@ -6,6 +6,7 @@ import com.architect.model.Repo;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import java.util.Collection;
 import java.util.List;
 
 public interface ApiCallRepository extends JpaRepository<ApiCall, Long> {
@@ -38,4 +39,7 @@ public interface ApiCallRepository extends JpaRepository<ApiCall, Long> {
         ) pairs
         """, nativeQuery = true)
     long countDistinctCrossRepoCallPairsForUser(@Param("userId") Long userId);
+
+    @Query("SELECT COUNT(c) FROM ApiCall c WHERE c.callerRepo.id IN :repoIds AND c.targetKind = :tk")
+    long countByCallerRepoIdInAndTargetKind(@Param("repoIds") Collection<Long> repoIds, @Param("tk") String tk);
 }

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,6 +44,9 @@ public class RuntimeWiringExtractorService {
         }
         if (lower.endsWith(".env") || lower.endsWith(".env.local") || lower.endsWith(".env.development")) {
             out.addAll(fromEnv(content, filePath));
+        }
+        if (lower.endsWith(".js") || lower.endsWith(".ts") || lower.endsWith(".mjs")) {
+            out.addAll(fromJsGatewayFile(content, filePath));
         }
         return out;
     }
@@ -160,6 +164,49 @@ public class RuntimeWiringExtractorService {
                 }
             }
             out.add(f(RuntimeWiringFact.VITE_PROXY, proxyPath != null ? proxyPath : "/api", target, i + 1));
+        }
+        return out;
+    }
+
+    /**
+     * Detects Express/Node.js proxy routing maps like:
+     * <pre>
+     * const ROUTE_TO_SERVICE = {
+     *   bookings: "booking-service",
+     *   users:    "user-service",
+     * };
+     * </pre>
+     * Creates GATEWAY_ROUTE facts so the graph shows api-gateway → downstream service edges.
+     */
+    private static final Pattern JS_ROUTE_MAP_ENTRY = Pattern.compile(
+            "['\"]?([a-zA-Z][a-zA-Z0-9_-]+)['\"]?\\s*:\\s*['\"]([a-zA-Z][a-zA-Z0-9_-]*(?:-service|-gateway|-registry|-api|-server|-client))['\"]",
+            Pattern.CASE_INSENSITIVE);
+
+    private List<ExtractedFact> fromJsGatewayFile(String content, String path) {
+        List<ExtractedFact> out = new ArrayList<>();
+        // Only process files that look like server/gateway entry points
+        String l = path.replace('\\', '/').toLowerCase(Locale.ROOT);
+        String filename = l.contains("/") ? l.substring(l.lastIndexOf('/') + 1) : l;
+        boolean isServerFile = filename.equals("server.js") || filename.equals("server.ts")
+                || filename.equals("server.mjs") || filename.equals("gateway.js")
+                || filename.equals("gateway.ts") || filename.equals("index.js")
+                || filename.equals("index.ts") || filename.equals("app.js")
+                || filename.equals("app.ts");
+        if (!isServerFile) return out;
+
+        String[] lines = content.split("\n");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.trim().startsWith("//") || line.trim().startsWith("*")) continue;
+            Matcher m = JS_ROUTE_MAP_ENTRY.matcher(line);
+            while (m.find()) {
+                String segment = m.group(1).trim();
+                String serviceName = m.group(2).trim();
+                // Skip if segment looks like a JS property name that's not a path segment
+                if (segment.length() > 32 || segment.contains(".")) continue;
+                String pathPattern = "/api/" + segment + "/**";
+                out.add(f(RuntimeWiringFact.GATEWAY_ROUTE, pathPattern, serviceName, i + 1));
+            }
         }
         return out;
     }

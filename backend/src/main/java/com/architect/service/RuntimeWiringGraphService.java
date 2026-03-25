@@ -3,8 +3,10 @@ package com.architect.service;
 import com.architect.dto.EdgeDto;
 import com.architect.model.Repo;
 import com.architect.model.RuntimeWiringFact;
+import com.architect.model.RuntimeWiringWarning;
 import com.architect.model.User;
 import com.architect.repository.RuntimeWiringFactRepository;
+import com.architect.repository.RuntimeWiringWarningRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -21,9 +23,12 @@ import java.util.stream.Collectors;
 public class RuntimeWiringGraphService {
 
     private final RuntimeWiringFactRepository factRepository;
+    private final RuntimeWiringWarningRepository warningRepository;
 
     public List<EdgeDto> buildWiredEdges(User user, List<Repo> repos) {
         if (repos.isEmpty()) return List.of();
+
+        List<RuntimeWiringWarning> pendingWarnings = new ArrayList<>();
 
         List<RuntimeWiringFact> facts = factRepository.findAllByUserId(user.getId());
         Map<Long, List<RuntimeWiringFact>> byRepo = facts.stream()
@@ -100,7 +105,19 @@ public class RuntimeWiringGraphService {
                 Matcher m = portP.matcher(target);
                 if (!m.find()) continue;
                 int port = Integer.parseInt(m.group(1));
-                Long targetRepo = findRepoByPort(port, byRepo, repos, gatewayRepoId);
+                PortResolution pr = resolvePortForViteProxy(port, byRepo, repos, gatewayRepoId);
+                if (pr.ambiguous() != null && !pr.ambiguous().isEmpty()) {
+                    String names = pr.ambiguous().stream().map(id -> repoName(repos, id)).toList().toString();
+                    pendingWarnings.add(RuntimeWiringWarning.builder()
+                            .user(user)
+                            .repo(r)
+                            .factType(RuntimeWiringFact.VITE_PROXY)
+                            .message("Ambiguous Vite proxy target: port " + port + " matches multiple repos " + names
+                                    + " — no UI_PROXY edge was created.")
+                            .build());
+                    continue;
+                }
+                Long targetRepo = pr.target();
                 if (targetRepo == null || targetRepo.equals(r.getId())) continue;
                 String eid = "wired-vite-" + r.getId() + "-" + targetRepo;
                 if (!seen.add(eid)) continue;
@@ -163,7 +180,49 @@ public class RuntimeWiringGraphService {
                     .build());
         }
 
+        if (!pendingWarnings.isEmpty()) {
+            warningRepository.saveAll(pendingWarnings);
+        }
+
         return edges;
+    }
+
+    private record PortResolution(Long target, List<Long> ambiguous) {
+        static PortResolution ok(Long target) {
+            return new PortResolution(target, null);
+        }
+
+        static PortResolution ambiguous(List<Long> ids) {
+            return new PortResolution(null, ids);
+        }
+    }
+
+    /**
+     * When multiple repos share the same SERVER_PORT, do not pick arbitrarily — return ambiguity.
+     */
+    private PortResolution resolvePortForViteProxy(int port, Map<Long, List<RuntimeWiringFact>> byRepo,
+                                                  List<Repo> repos, Long preferredGatewayId) {
+        List<Long> matches = new ArrayList<>();
+        for (Repo r : repos) {
+            for (RuntimeWiringFact f : byRepo.getOrDefault(r.getId(), List.of())) {
+                if (RuntimeWiringFact.SERVER_PORT.equals(f.getFactType())
+                        && f.getFactValue() != null
+                        && String.valueOf(port).equals(f.getFactValue().trim())) {
+                    matches.add(r.getId());
+                    break;
+                }
+            }
+        }
+        if (matches.isEmpty()) {
+            return PortResolution.ok(preferredGatewayId);
+        }
+        if (matches.size() == 1) {
+            return PortResolution.ok(matches.get(0));
+        }
+        if (preferredGatewayId != null && matches.contains(preferredGatewayId)) {
+            return PortResolution.ok(preferredGatewayId);
+        }
+        return PortResolution.ambiguous(matches);
     }
 
     private static String toLogicalHost(String raw) {
@@ -193,26 +252,6 @@ public class RuntimeWiringGraphService {
 
     private static String repoName(List<Repo> repos, long id) {
         return repos.stream().filter(r -> r.getId().equals(id)).map(Repo::getName).findFirst().orElse("?");
-    }
-
-    private static Long findRepoByPort(int port, Map<Long, List<RuntimeWiringFact>> byRepo,
-                                       List<Repo> repos, Long preferredGatewayId) {
-        List<Long> matches = new ArrayList<>();
-        for (Repo r : repos) {
-            for (RuntimeWiringFact f : byRepo.getOrDefault(r.getId(), List.of())) {
-                if (RuntimeWiringFact.SERVER_PORT.equals(f.getFactType())
-                        && f.getFactValue() != null
-                        && String.valueOf(port).equals(f.getFactValue().trim())) {
-                    matches.add(r.getId());
-                    break;
-                }
-            }
-        }
-        if (matches.isEmpty()) return preferredGatewayId;
-        if (preferredGatewayId != null && matches.contains(preferredGatewayId)) {
-            return preferredGatewayId;
-        }
-        return matches.get(0);
     }
 
     private static Long resolveRepoForServiceId(String serviceId, Map<String, Long> logicalNameToRepo, List<Repo> repos) {

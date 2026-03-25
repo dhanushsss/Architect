@@ -34,7 +34,7 @@ export default function GroupNode({ data, selected }: NodeProps) {
       onDoubleClick={() => toggleGroup(d.groupId)}
       title="Double-click to expand"
     >
-      <Handle type="target" position={Position.Left} className="!bg-slate-400 !border-slate-600 !w-3 !h-3" />
+      <Handle type="target" position={Position.Top} className="!bg-slate-400 !border-slate-600 !w-3 !h-3" />
 
       {isZoomedOut ? (
         /* Level 1: just dot + count */
@@ -65,7 +65,7 @@ export default function GroupNode({ data, selected }: NodeProps) {
         </>
       )}
 
-      <Handle type="source" position={Position.Right} className="!bg-slate-400 !border-slate-600 !w-3 !h-3" />
+      <Handle type="source" position={Position.Bottom} className="!bg-slate-400 !border-slate-600 !w-3 !h-3" />
     </div>
   )
 }

@@ -3,11 +3,11 @@ import { useGraphStore } from '../../store/graphStore'
 import clsx from 'clsx'
 
 const FILTERS = [
-  { key: 'CALLS',      label: 'Calls',    color: 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10',  desc: 'HTTP calls in code' },
-  { key: 'WIRED',      label: 'Wired',    color: 'text-pink-400 border-pink-500/30 bg-pink-500/10',       desc: 'Gateway, UI proxy, registry (config)' },
-  { key: 'IMPORTS',    label: 'Imports',  color: 'text-purple-400 border-purple-500/30 bg-purple-500/10', desc: 'Import graph' },
-  { key: 'DEFINES',    label: 'Defines',  color: 'text-blue-400 border-blue-500/30 bg-blue-500/10',       desc: 'Repo → endpoint' },
-  { key: 'READS',      label: 'Reads',    color: 'text-orange-400 border-orange-500/30 bg-orange-500/10', desc: 'Config reads' },
+  { key: 'CALLS',    label: 'Calls',     color: 'text-indigo-400 border-indigo-500/30 bg-indigo-500/10', desc: 'Cross-service HTTP calls' },
+  { key: 'WIRED',    label: 'Wired',     color: 'text-pink-400 border-pink-500/30 bg-pink-500/10',      desc: 'Gateway, UI proxy, registry (config)' },
+  { key: 'IMPORTS',  label: 'Imports',   color: 'text-purple-400 border-purple-500/30 bg-purple-500/10',desc: 'Import graph' },
+  { key: 'DEFINES',  label: 'Endpoints', color: 'text-blue-400 border-blue-500/30 bg-blue-500/10',      desc: 'Expand endpoint groups under each repo' },
+  { key: 'READS',    label: 'Reads',     color: 'text-orange-400 border-orange-500/30 bg-orange-500/10',desc: 'Config reads' },
 ]
 
 export default function GraphFilterBar() {
@@ -47,17 +47,12 @@ export default function GraphFilterBar() {
         ))}
       </div>
 
-      {/* Row 2: hint when all filters are on */}
-      {activeFilters.size >= 5 && (
-        <div className="flex items-center gap-1.5 text-xs text-slate-500 pl-1">
-          <Layers className="w-3 h-3" />
-          Tip: hide edge types to reduce noise
-        </div>
-      )}
-
-      {/* Row 3: hint for group expand */}
-      <div className="text-xs text-slate-600 pl-1">
-        Click a <span className="text-blue-400">repo</span> → see which repos it links to · double-click a group to expand
+      {/* Row 2: context hint */}
+      <div className="flex items-center gap-1.5 text-xs text-slate-500 pl-1">
+        <Layers className="w-3 h-3" />
+        {activeFilters.has('DEFINES')
+          ? 'Showing endpoint groups · double-click a group to expand'
+          : 'Tree view · toggle Endpoints to see API groups'}
       </div>
     </div>
   )

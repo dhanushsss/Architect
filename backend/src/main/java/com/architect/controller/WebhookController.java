@@ -11,6 +11,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.view.RedirectView;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.Map;
 
 /**
@@ -59,15 +63,54 @@ public class WebhookController {
     @PostMapping("/github")
     public ResponseEntity<Void> handleGithubWebhook(
             @RequestHeader(value = "X-GitHub-Event", defaultValue = "") String event,
-            @RequestBody Map<String, Object> payload) {
+            @RequestHeader(value = "X-Hub-Signature-256", required = false) String sigHeader,
+            @RequestBody String rawBody) {
+
+        String secret = appProperties.getGithub().getWebhookSecret();
+        if (secret != null && !secret.isBlank()) {
+            if (!isValidSignature(rawBody, sigHeader, secret)) {
+                log.warn("Webhook signature mismatch — rejecting event '{}'", event);
+                return ResponseEntity.status(401).build();
+            }
+        }
 
         log.info("Received GitHub webhook event: {}", event);
 
         if ("pull_request".equals(event)) {
-            handlePullRequestEvent(payload);
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> payload = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .readValue(rawBody, Map.class);
+                handlePullRequestEvent(payload);
+            } catch (Exception e) {
+                log.warn("Failed to parse webhook payload: {}", e.getMessage());
+            }
         }
 
         return ResponseEntity.ok().build();
+    }
+
+    private boolean isValidSignature(String body, String sigHeader, String secret) {
+        if (sigHeader == null || !sigHeader.startsWith("sha256=")) return false;
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] expected = mac.doFinal(body.getBytes(StandardCharsets.UTF_8));
+            String expectedHex = "sha256=" + HexFormat.of().formatHex(expected);
+            return constantTimeEquals(expectedHex, sigHeader);
+        } catch (Exception e) {
+            log.warn("Signature validation error: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean constantTimeEquals(String a, String b) {
+        if (a.length() != b.length()) return false;
+        int result = 0;
+        for (int i = 0; i < a.length(); i++) {
+            result |= a.charAt(i) ^ b.charAt(i);
+        }
+        return result == 0;
     }
 
     @SuppressWarnings("unchecked")

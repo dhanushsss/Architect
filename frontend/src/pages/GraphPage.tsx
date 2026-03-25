@@ -4,12 +4,18 @@ import GraphFilterBar from '../components/graph/GraphFilterBar'
 import NodeDetailPanel from '../components/panels/NodeDetailPanel'
 import Spinner from '../components/ui/Spinner'
 import { useGraph } from '../hooks/useGraph'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { graphApi } from '../services/api'
 import { useGraphStore } from '../store/graphStore'
 import { RefreshCw } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
 
 export default function GraphPage() {
   const { data: graph, isLoading, isError } = useGraph()
+  const { data: wiringWarnings = [] } = useQuery({
+    queryKey: ['graph-wiring-warnings'],
+    queryFn: graphApi.getWiringWarnings,
+    staleTime: 60000,
+  })
   const { selectedNode, setSelectedNode } = useGraphStore()
   const qc = useQueryClient()
 
@@ -35,7 +41,18 @@ export default function GraphPage() {
             </span>
           ))}
           <div className="flex-1" />
-          <button onClick={() => qc.invalidateQueries({ queryKey: ['graph'] })}
+          {wiringWarnings.length > 0 && (
+            <span
+              className="text-xs font-medium px-2 py-0.5 rounded border border-amber-500/40 bg-amber-500/15 text-amber-200 cursor-help"
+              title={wiringWarnings.map(w => w.message).join('\n')}
+            >
+              Wiring warnings ({wiringWarnings.length})
+            </span>
+          )}
+          <button onClick={() => {
+            qc.invalidateQueries({ queryKey: ['graph'] })
+            qc.invalidateQueries({ queryKey: ['graph-wiring-warnings'] })
+          }}
             className="text-slate-400 hover:text-white p-1 transition-colors">
             <RefreshCw className="w-4 h-4" />
           </button>
