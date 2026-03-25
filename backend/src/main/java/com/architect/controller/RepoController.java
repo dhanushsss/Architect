@@ -5,8 +5,10 @@ import com.architect.model.Repo;
 import com.architect.model.User;
 import com.architect.repository.ApiEndpointRepository;
 import com.architect.repository.RepoRepository;
+import com.architect.scan.ScanType;
 import com.architect.service.GitHubService;
 import com.architect.service.RepoScannerService;
+import com.architect.service.ScanQueueService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -24,6 +26,7 @@ public class RepoController {
     private final ApiEndpointRepository apiEndpointRepository;
     private final GitHubService gitHubService;
     private final RepoScannerService repoScannerService;
+    private final ScanQueueService scanQueueService;
 
     @GetMapping
     public ResponseEntity<List<RepoDto>> listConnectedRepos(@AuthenticationPrincipal User user) {
@@ -65,8 +68,8 @@ public class RepoController {
                 .build());
 
         repo = repoRepository.save(repo);
-        // Change 1 — auto-scan immediately on connect (QUICK for fast first experience)
-        repoScannerService.scanRepo(repo, user.getAccessToken(), RepoScannerService.ScanMode.QUICK);
+        // Change 1 — auto-scan on connect (QUICK), queued with bounded workers
+        scanQueueService.enqueue(repo.getId(), user.getId(), ScanType.MANUAL, RepoScannerService.ScanMode.QUICK);
         return ResponseEntity.ok(toDto(repo, user));
     }
 
@@ -90,8 +93,12 @@ public class RepoController {
                 .orElseThrow(() -> new RuntimeException("Repo not found"));
         RepoScannerService.ScanMode scanMode = "quick".equalsIgnoreCase(mode)
                 ? RepoScannerService.ScanMode.QUICK : RepoScannerService.ScanMode.DEEP;
-        repoScannerService.scanRepo(repo, user.getAccessToken(), scanMode);
-        return ResponseEntity.ok(Map.of("status", "scan_started", "mode", scanMode.name()));
+        scanQueueService.enqueue(repo.getId(), user.getId(), ScanType.MANUAL, scanMode);
+        return ResponseEntity.accepted().body(Map.of(
+                "status", "QUEUED",
+                "type", "MANUAL",
+                "message", "Scan scheduled",
+                "mode", scanMode.name()));
     }
 
     @DeleteMapping("/{repoId}")

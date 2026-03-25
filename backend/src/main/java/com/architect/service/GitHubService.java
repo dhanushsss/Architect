@@ -300,7 +300,7 @@ public class GitHubService {
                 .bodyValue(Map.of(
                     "state", state,
                     "description", description != null && description.length() <= 140 ? description : description.substring(0, 137) + "...",
-                    "context", context != null ? context : "architect/pr-impact",
+                    "context", context != null ? context : "zerqis/pr-impact",
                     "target_url", targetUrl != null ? targetUrl : ""
                 ))
                 .retrieve()

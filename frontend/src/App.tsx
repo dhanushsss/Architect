@@ -8,9 +8,10 @@ import AiQueryPage from './pages/AiQueryPage'
 import GovernancePage from './pages/GovernancePage'
 import ApiKeysPage from './pages/ApiKeysPage'
 import InsightsPage from './pages/InsightsPage'
+import { getAuthToken } from './authToken'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const token = localStorage.getItem('architect_token')
+  const token = getAuthToken()
   if (!token) return <Navigate to="/login" replace />
   return <>{children}</>
 }

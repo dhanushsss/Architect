@@ -1,8 +1,33 @@
 import { useEffect, useState } from 'react'
+import { HelpCircle } from 'lucide-react'
 import Navbar from '../components/layout/Navbar'
 import api from '../services/api'
 
+/** Matches backend `GovernanceService` heuristics for endpoint health. */
+const ENDPOINT_STATUS_TIPS = {
+  ACTIVE:
+    'At least one API call from your connected repos was matched to this endpoint, and it is not flagged by the v1→v2 deprecation heuristic.',
+  ORPHANED:
+    'No scanned calls from your connected repos resolve to this endpoint. It may be unused, only called from outside the graph, or use URL patterns we could not match.',
+  DEPRECATED:
+    'This path is under /v1/ while the same repo also has routes under /v2/ — Zerqis treats that as potentially superseded (heuristic).',
+} as const
+
+function StatLabel({ label, tip }: { label: string; tip?: string }) {
+  if (!tip) return <p className="text-xs text-gray-400 mb-1">{label}</p>
+  return (
+    <p className="text-xs text-gray-400 mb-1">
+      <span className="inline-flex items-center gap-1 cursor-help" title={tip}>
+        {label}
+        <HelpCircle className="w-3.5 h-3.5 text-gray-500 shrink-0" aria-hidden />
+      </span>
+    </p>
+  )
+}
+
 type GovTab = 'dashboard' | 'soc2' | 'snapshots'
+
+type GovStatCard = { label: string; value: string | number; color: string; tip?: string }
 
 export default function GovernancePage() {
   const [tab, setTab] = useState<GovTab>('dashboard')
@@ -93,14 +118,28 @@ export default function GovernancePage() {
             <div className="space-y-6">
               {/* Stats */}
               <div className="grid grid-cols-4 gap-4">
-                {[
+                {([
                   { label: 'Total Endpoints', value: governance.totalEndpoints, color: 'text-indigo-400' },
-                  { label: 'Orphaned', value: governance.orphanedEndpoints, color: 'text-yellow-400' },
-                  { label: 'Deprecated', value: governance.deprecatedEndpoints, color: 'text-red-400' },
-                  { label: 'Health Score', value: governance.healthScore + '%', color: governance.healthScore > 70 ? 'text-green-400' : 'text-orange-400' },
-                ].map(s => (
+                  {
+                    label: 'Orphaned',
+                    value: governance.orphanedEndpoints,
+                    color: 'text-yellow-400',
+                    tip: ENDPOINT_STATUS_TIPS.ORPHANED,
+                  },
+                  {
+                    label: 'Deprecated',
+                    value: governance.deprecatedEndpoints,
+                    color: 'text-red-400',
+                    tip: ENDPOINT_STATUS_TIPS.DEPRECATED,
+                  },
+                  {
+                    label: 'Health Score',
+                    value: governance.healthScore + '%',
+                    color: governance.healthScore > 70 ? 'text-green-400' : 'text-orange-400',
+                  },
+                ] satisfies GovStatCard[]).map(s => (
                   <div key={s.label} className="bg-gray-800 rounded-xl p-4">
-                    <p className="text-xs text-gray-400 mb-1">{s.label}</p>
+                    <StatLabel label={s.label} tip={s.tip} />
                     <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
                   </div>
                 ))}
@@ -133,7 +172,15 @@ export default function GovernancePage() {
                         <th className="text-left px-4 py-2">Path</th>
                         <th className="text-left px-4 py-2">Framework</th>
                         <th className="text-left px-4 py-2">Callers</th>
-                        <th className="text-left px-4 py-2">Status</th>
+                        <th className="text-left px-4 py-2">
+                          <span
+                            className="inline-flex items-center gap-1 cursor-help"
+                            title={`ACTIVE — ${ENDPOINT_STATUS_TIPS.ACTIVE} ORPHANED — ${ENDPOINT_STATUS_TIPS.ORPHANED} DEPRECATED — ${ENDPOINT_STATUS_TIPS.DEPRECATED}`}
+                          >
+                            Status
+                            <HelpCircle className="w-3.5 h-3.5 text-gray-500" aria-hidden />
+                          </span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -149,7 +196,20 @@ export default function GovernancePage() {
                           <td className="px-4 py-2 text-xs text-gray-400">{ep.framework}</td>
                           <td className="px-4 py-2 text-center text-gray-300">{ep.callerCount}</td>
                           <td className="px-4 py-2">
-                            <span className={`text-xs ${statusColor(ep.status)}`}>{ep.status}</span>
+                            <span
+                              className={`text-xs cursor-help border-b border-dotted border-gray-600 ${statusColor(ep.status)}`}
+                              title={
+                                ep.status === 'ACTIVE'
+                                  ? ENDPOINT_STATUS_TIPS.ACTIVE
+                                  : ep.status === 'ORPHANED'
+                                    ? ENDPOINT_STATUS_TIPS.ORPHANED
+                                    : ep.status === 'DEPRECATED'
+                                      ? ENDPOINT_STATUS_TIPS.DEPRECATED
+                                      : undefined
+                              }
+                            >
+                              {ep.status}
+                            </span>
                           </td>
                         </tr>
                       ))}

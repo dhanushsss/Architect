@@ -40,7 +40,7 @@ export default function ApiKeysPage() {
       <Navbar />
       <div className="max-w-3xl mx-auto px-6 py-8">
         <h1 className="text-2xl font-bold mb-2">🔑 API Keys</h1>
-        <p className="text-gray-400 text-sm mb-8">Use API keys to access the Architect Public API from your tools and integrations.</p>
+        <p className="text-gray-400 text-sm mb-8">Use API keys to access the Zerqis Public API from your tools and integrations.</p>
 
         {/* New key created */}
         {newKey && (

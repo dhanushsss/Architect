@@ -43,6 +43,9 @@ app:
     webhook-url: ${SLACK_WEBHOOK_URL:}
   anthropic:
     api-key: ${ANTHROPIC_API_KEY:}
+    pr-risk-explanation-timeout-ms: ${PR_AI_RISK_TIMEOUT_MS:3000}
+    pr-risk-explanation-max-tokens: ${PR_AI_RISK_MAX_TOKENS:300}
+    pr-risk-explanation-temperature: ${PR_AI_RISK_TEMPERATURE:0.25}
   pr-engine:
     max-changed-files-to-scan: ${PR_MAX_FILES_SCAN:50}
     post-commit-status: ${PR_POST_COMMIT_STATUS:false}

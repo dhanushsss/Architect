@@ -86,19 +86,24 @@ public class RepoScannerService {
         return Optional.empty();
     }
 
-    /** Convenience — defaults to DEEP scan */
-    @Async
-    public void scanRepo(Repo repo, String accessToken) {
-        scanRepo(repo, accessToken, ScanMode.DEEP);
+    /**
+     * Invoked by {@link ScanJobAsyncExecutor} on {@code scanExecutor} after a task is claimed from the DB queue.
+     */
+    @CacheEvict(value = {"graph", "riskOverview", "insights"}, key = "#userId")
+    public void scanRepoInternal(Long repoId, Long userId, ScanMode mode) {
+        Repo repo = repoRepository.findByIdWithUser(repoId)
+                .orElseThrow(() -> new IllegalArgumentException("Repo not found: " + repoId));
+        if (!repo.getUser().getId().equals(userId)) {
+            throw new IllegalArgumentException("Repo does not belong to user");
+        }
+        performScan(repo, repo.getUser().getAccessToken(), mode);
     }
 
     /**
      * Not a single long {@code @Transactional}: one huge transaction made Hibernate/Postgres slow on large scans.
      * Clears are committed in a short transaction; per-entity saves use their own transactions.
      */
-    @Async
-    @CacheEvict(value = {"graph", "riskOverview", "insights"}, key = "#repo.user.id")
-    public void scanRepo(Repo repo, String accessToken, ScanMode mode) {
+    private void performScan(Repo repo, String accessToken, ScanMode mode) {
         Instant scanStarted = Instant.now();
         log.info("Starting {} scan for repo: {}", mode, repo.getFullName());
         repo.setScanStatus(Repo.ScanStatus.SCANNING);
@@ -268,8 +273,13 @@ public class RepoScannerService {
             }
 
             ScanMode edgeMode = mode == ScanMode.INCREMENTAL ? ScanMode.DEEP : mode;
-            buildDependencyEdges(repo, edgeMode);
-            logScanQualityMetrics(repo, processed);
+            int processedFiles = processed;
+            // Keep a short transaction open for edge-building so Hibernate proxies (Repo, Endpoint)
+            // can be safely initialized without holding a transaction for the entire scan.
+            transactionTemplate.executeWithoutResult(tx -> {
+                buildDependencyEdges(repo, edgeMode);
+                logScanQualityMetrics(repo, processedFiles);
+            });
 
             repo.setScanStatus(Repo.ScanStatus.COMPLETE);
             repo.setLastScannedAt(LocalDateTime.now());
@@ -440,7 +450,7 @@ public class RepoScannerService {
      * to ensure every repo's calls are matched against every other repo's endpoints, regardless
      * of scan order.
      */
-    @Async
+    @Async("scanExecutor")
     @Transactional
     @CacheEvict(value = {"graph", "riskOverview"}, key = "#user.id")
     public void relinkAllRepos(User user) {

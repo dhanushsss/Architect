@@ -1,5 +1,6 @@
 package com.architect.service;
 
+import com.architect.dto.AiRiskExplanation;
 import com.architect.dto.ImpactDto;
 
 import java.util.List;
@@ -59,21 +60,26 @@ public final class PrCommentFormatter {
 
     public static String buildComment(Scenario scenario, ImpactDto impact, int changedFileCount,
                                       String prUrl, String frontendBase) {
+        return buildComment(scenario, impact, changedFileCount, prUrl, frontendBase, null);
+    }
+
+    public static String buildComment(Scenario scenario, ImpactDto impact, int changedFileCount,
+                                      String prUrl, String frontendBase, AiRiskExplanation aiInsight) {
         int repos = impact.getDependentsCount();
         int depFiles = impact.getAffectedFiles() != null ? impact.getAffectedFiles().size() : 0;
         String api = primaryApiLine(impact);
         String impactUrl = frontendBase + "/impact/repo/" + impact.getSubjectId();
 
         return switch (scenario) {
-            case WIDE_CASCADING -> formatWide(impact, repos, depFiles, api, prUrl, impactUrl);
-            case CRITICAL_CROSS_SERVICE -> formatCritical(impact, repos, depFiles, api, prUrl, impactUrl);
-            case MEDIUM_INTERNAL -> formatMedium(impact, repos, depFiles, api, prUrl, impactUrl);
-            case ORPHAN_API_RISK -> formatOrphan(impact, api, prUrl, impactUrl);
-            case SAFE_REFACTOR -> formatSafe(impact, prUrl, impactUrl);
+            case WIDE_CASCADING -> formatWide(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
+            case CRITICAL_CROSS_SERVICE -> formatCritical(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
+            case MEDIUM_INTERNAL -> formatMedium(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
+            case ORPHAN_API_RISK -> formatOrphan(impact, api, prUrl, impactUrl, aiInsight);
+            case SAFE_REFACTOR -> formatSafe(impact, prUrl, impactUrl, aiInsight);
         };
     }
 
-    private static void appendWhyExact(StringBuilder sb, ImpactDto impact) {
+    private static void appendWhyExact(StringBuilder sb, ImpactDto impact, AiRiskExplanation aiInsight) {
         sb.append("### Why this is risky\n\n");
         appendConcreteCallSites(sb, impact, primaryApiLine(impact));
 
@@ -84,6 +90,33 @@ public final class PrCommentFormatter {
             }
         }
         appendAnalysisConfidenceLine(sb, impact);
+        appendAiInsight(sb, aiInsight);
+    }
+
+    private static void appendAiInsight(StringBuilder sb, AiRiskExplanation e) {
+        if (e == null) {
+            return;
+        }
+        sb.append("### 🤖 AI Insight\n\n");
+        sb.append("**Summary**\n");
+        sb.append(e.summary()).append("\n\n");
+        if (e.impact() != null && !e.impact().isEmpty()) {
+            sb.append("**Impact**\n");
+            for (String line : e.impact()) {
+                sb.append("- ").append(line).append("\n");
+            }
+            sb.append("\n");
+        }
+        if (e.recommendations() != null && !e.recommendations().isEmpty()) {
+            sb.append("**Recommended actions**\n");
+            for (String line : e.recommendations()) {
+                sb.append("- ").append(line).append("\n");
+            }
+            sb.append("\n");
+        }
+        if (e.confidenceNote() != null && !e.confidenceNote().isBlank()) {
+            sb.append("_").append(e.confidenceNote()).append("_\n\n");
+        }
     }
 
     private static void appendConcreteCallSites(StringBuilder sb, ImpactDto impact, String api) {
@@ -138,9 +171,9 @@ public final class PrCommentFormatter {
     }
 
     private static String formatCritical(ImpactDto impact, int repos, int depFiles, String api,
-                                         String prUrl, String impactUrl) {
+                                         String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## 🚨 Architect: High Risk — Cross-Service Impact\n\n");
+        sb.append("## 🚨 Zerqis: High Risk — Cross-Service Impact\n\n");
         sb.append("This change **affects multiple services** and may break production flows.\n\n");
         sb.append("**Impact**\n");
         sb.append("• **").append(repos).append("** ").append(repos == 1 ? "repository" : "repositories").append(" affected\n");
@@ -151,19 +184,19 @@ public final class PrCommentFormatter {
         sb.append("You modified API → **`").append(api).append("`**  \n");
         sb.append("This endpoint is **actively used** across these services.\n\n");
         sb.append("⚠️ **Action required:** Coordinate with affected teams or update dependent calls **before merging**.\n\n");
-        appendWhyExact(sb, impact);
+        appendWhyExact(sb, impact, aiInsight);
         sb.append("---\n");
-        sb.append("**[View full impact → Open in Architect](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
-        sb.append("\n<sub>Analysis by Architect · targeted scan + dependency graph</sub>");
+        sb.append("**[View full impact → Open in Zerqis](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
+        sb.append("\n<sub>Analysis by Zerqis · targeted scan + dependency graph</sub>");
         return sb.toString();
     }
 
     private static String formatMedium(ImpactDto impact, int repos, int depFiles, String api,
-                                       String prUrl, String impactUrl) {
+                                       String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         String name = impact.getAffectedRepos() != null && !impact.getAffectedRepos().isEmpty()
             ? impact.getAffectedRepos().get(0).getName() : "downstream service";
         StringBuilder sb = new StringBuilder();
-        sb.append("## ⚠️ Architect: Medium Risk — Internal Dependency\n\n");
+        sb.append("## ⚠️ Zerqis: Medium Risk — Internal Dependency\n\n");
         sb.append("This change impacts **another part** of your system (limited blast radius).\n\n");
         sb.append("**Impact**\n");
         sb.append("• **1** repository affected\n");
@@ -174,31 +207,32 @@ public final class PrCommentFormatter {
         sb.append("Changes detected in API → **`").append(api).append("`**  \n");
         sb.append("Used within your connected services.\n\n");
         sb.append("⚠️ **Action:** Quick validation recommended before merge.\n\n");
-        appendWhyExact(sb, impact);
+        appendWhyExact(sb, impact, aiInsight);
         sb.append("---\n");
-        sb.append("**[Details → Open in Architect](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
-        sb.append("\n<sub>Analysis by Architect</sub>");
+        sb.append("**[Details → Open in Zerqis](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
+        sb.append("\n<sub>Analysis by Zerqis</sub>");
         return sb.toString();
     }
 
-    private static String formatSafe(ImpactDto impact, String prUrl, String impactUrl) {
+    private static String formatSafe(ImpactDto impact, String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## ✅ Architect: Safe to Merge\n\n");
-        sb.append("**No cross-repo impact detected** in Architect’s dependency graph for this change.\n\n");
+        sb.append("## ✅ Zerqis: Safe to Merge\n\n");
+        sb.append("**No cross-repo impact detected** in Zerqis’s dependency graph for this change.\n\n");
         sb.append("This change appears **isolated** relative to connected services.\n\n");
-        appendWhyExact(sb, impact);
+        appendWhyExact(sb, impact, aiInsight);
         sb.append("---\n\n");
-        sb.append("**[Open in Architect](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n\n");
-        sb.append("<sub>(Analysis by Architect)</sub>");
+        sb.append("**[Open in Zerqis](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n\n");
+        sb.append("<sub>(Analysis by Zerqis)</sub>");
         return sb.toString();
     }
 
-    private static String formatOrphan(ImpactDto impact, String api, String prUrl, String impactUrl) {
+    private static String formatOrphan(ImpactDto impact, String api, String prUrl, String impactUrl,
+                                       AiRiskExplanation aiInsight) {
         List<String> orphans = impact.getPrOrphanEndpoints();
         String show = (orphans != null && !orphans.isEmpty()) ? orphans.get(0) : api;
         StringBuilder sb = new StringBuilder();
-        sb.append("## ⚠️ Architect: Risk — No Known Consumers\n\n");
-        sb.append("This API has **no detected cross-repo callers** in Architect’s graph.\n\n");
+        sb.append("## ⚠️ Zerqis: Risk — No Known Consumers\n\n");
+        sb.append("This API has **no detected cross-repo callers** in Zerqis’s graph.\n\n");
         sb.append("**API**\n");
         sb.append("`").append(show).append("`\n\n");
         if (orphans != null && orphans.size() > 1) {
@@ -210,17 +244,17 @@ public final class PrCommentFormatter {
         sb.append("- This may be **unused** (safe to remove), **or**\n");
         sb.append("- Calls are **not tracked** (dynamic URLs, mobile, external clients) → **hidden dependency risk**\n\n");
         sb.append("⚠️ **Action:** Confirm usage before removing or materially changing this API.\n\n");
-        appendWhyExact(sb, impact);
+        appendWhyExact(sb, impact, aiInsight);
         sb.append("---\n");
-        sb.append("**[Investigate → Open in Architect](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
-        sb.append("\n<sub>Analysis by Architect</sub>");
+        sb.append("**[Investigate → Open in Zerqis](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
+        sb.append("\n<sub>Analysis by Zerqis</sub>");
         return sb.toString();
     }
 
     private static String formatWide(ImpactDto impact, int repos, int depFiles, String api,
-                                     String prUrl, String impactUrl) {
+                                     String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## 🚨 Architect: High Risk — Wide System Impact\n\n");
+        sb.append("## 🚨 Zerqis: High Risk — Wide System Impact\n\n");
         sb.append("This change has a **large blast radius** across your system.\n\n");
         sb.append("**Impact**\n");
         sb.append("• **").append(repos).append("** repositories affected\n");
@@ -235,16 +269,16 @@ public final class PrCommentFormatter {
         sb.append("**Affected services**\n");
         listRepos(sb, impact.getAffectedRepos(), 15);
         sb.append("\n");
-        appendWhyExact(sb, impact);
+        appendWhyExact(sb, impact, aiInsight);
         sb.append("---\n");
-        sb.append("**[View impact → Open in Architect](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
-        sb.append("\n<sub>Analysis by Architect</sub>");
+        sb.append("**[View impact → Open in Zerqis](").append(impactUrl).append(")** · [PR](").append(prUrl).append(")\n");
+        sb.append("\n<sub>Analysis by Zerqis</sub>");
         return sb.toString();
     }
 
     private static void listRepos(StringBuilder sb, List<ImpactDto.AffectedItem> repos, int max) {
         if (repos == null || repos.isEmpty()) {
-            sb.append("_See Architect for details._\n");
+            sb.append("_See Zerqis for details._\n");
             return;
         }
         int n = Math.min(repos.size(), max);

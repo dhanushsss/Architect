@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { setAuthToken } from '../authToken'
 
 export default function AuthCallbackPage() {
   const [params] = useSearchParams()
@@ -9,7 +10,7 @@ export default function AuthCallbackPage() {
     const token = params.get('token')
     const error = params.get('error')
     if (token) {
-      localStorage.setItem('architect_token', token)
+      setAuthToken(token)
       navigate('/', { replace: true })
     } else {
       navigate('/login?error=' + (error || 'unknown'), { replace: true })

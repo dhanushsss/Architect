@@ -2,8 +2,11 @@ package com.architect.controller;
 
 import com.architect.config.AppProperties;
 import com.architect.repository.RepoRepository;
+import com.architect.scan.ScanType;
 import com.architect.service.GithubOAuthCallbackService;
 import com.architect.service.PRAnalysisService;
+import com.architect.service.RepoScannerService;
+import com.architect.service.ScanQueueService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -32,6 +35,7 @@ public class WebhookController {
     private final PRAnalysisService prAnalysisService;
     private final GithubOAuthCallbackService githubOAuthCallbackService;
     private final AppProperties appProperties;
+    private final ScanQueueService scanQueueService;
 
     /**
      * GitHub redirects the browser here with GET when the OAuth "Authorization callback URL"
@@ -53,7 +57,7 @@ public class WebhookController {
         String base = appProperties.getPublicBaseUrl() != null ? appProperties.getPublicBaseUrl() : "";
         String login = base + "/api/auth/github";
         String oauthCallback = appProperties.getGithub().getRedirectUri();
-        String body = "Architect GitHub webhook (POST only for pull_request events).\n\n"
+        String body = "Zerqis GitHub webhook (POST only for pull_request events).\n\n"
                 + "Sign in: open " + login + " in your browser.\n\n"
                 + "GitHub OAuth \"Authorization callback URL\" should be:\n  " + oauthCallback + "\n"
                 + "Do not use this webhook URL as the OAuth callback unless GITHUB_REDIRECT_URI matches it.\n";
@@ -134,9 +138,10 @@ public class WebhookController {
             repo -> {
                 prAnalysisService.processPullRequest(
                     repo, repo.getUser(), prNumber, headSha, prTitle, prUrl, fullName);
-                log.info("Queued PR analysis for {} PR #{}", fullName, prNumber);
+                scanQueueService.enqueue(repo.getId(), repo.getUser().getId(), ScanType.PR, RepoScannerService.ScanMode.DEEP);
+                log.info("Queued PR analysis and repo scan (PR priority) for {} PR #{}", fullName, prNumber);
             },
-            () -> log.debug("No Architect-connected repo for {}, skipping PR webhook", fullName)
+            () -> log.debug("No Zerqis-connected repo for {}, skipping PR webhook", fullName)
         );
     }
 }

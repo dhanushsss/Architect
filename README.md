@@ -1,449 +1,82 @@
-# Architect — Cross-Repo Dependency Mapper
+# Zerqis
 
-**Architect** helps engineering teams see how repos depend on each other and what breaks when APIs or shared code change. You connect GitHub repos, scan their code (endpoints, API calls, imports, config), and get an interactive dependency graph, impact and risk analysis, optional AI explanations, and enterprise governance—with GitHub and Slack integration and a public API for tooling.
+## What problem we solve
 
-**Quick start:** PostgreSQL running → `cd backend && ./mvnw spring-boot:run` → `cd frontend && npm i && npm run dev` → open http://localhost:3000 and log in with GitHub (set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `JWT_SECRET`, `DB_*` in env).
+Teams run many services and repos. **Who calls which API?** **What breaks if this PR merges?** That knowledge is usually tribal, spread across code review and production incidents. Zerqis **maps real dependencies from code** (not just docs) so you can see cross-repo impact **before** merge.
 
----
+## What we do
 
-## Table of contents
+1. **Connect** GitHub repos and **scan** source for API endpoints, outbound HTTP calls, component imports, and some runtime wiring hints.
+2. **Store** a dependency **graph** in PostgreSQL and expose it in a **UI** (graph, trees, traces, impact views).
+3. **Assess PR risk** via a **GitHub webhook**: changed files → targeted analysis → **comment + score** on the PR (core logic is deterministic; optional **AI** adds a short human explanation only).
+4. **Operate safely at scale**: scans go through a **DB-backed queue** with limits (PR-typed jobs prioritized over manual scans), multi-instance friendly coordination without Redis/Kafka.
 
-- [What the Product Does](#what-the-product-does)
-- [Prerequisites](#prerequisites)
-- [Security](#security-who-can-call-what)
-- [Setup & Run](#setup--run)
-- [How to Test It](#how-to-test-it)
-- [Frontend routes](#frontend-routes)
-- [API Reference](#api-reference)
-- [Application Flow](#application-flow-high-level)
-- [Project Layout](#project-layout-concise)
-- [Summary](#summary)
-- [Scan modes (quick vs deep)](#scan-modes-quick-vs-deep)
-- [Frontend vs backend API usage](#frontend-vs-backend-api-usage)
-- [Real-time PR engine](#real-time-pr-engine)
-- [Product roadmap (phases 1–4)](docs/ROADMAP.md)
-- [Versioning & releases](docs/VERSIONING.md) — **current: 1.1.0**
-- [E2E & testing analysis](docs/E2E_AND_TESTING.md) — manual flow vs automated gaps
-- [API call detection → CALL edges](docs/API_CALL_DETECTION.md) — cross-repo graph + EXTERNAL
-- [Runtime URL wiring](docs/RUNTIME_WIRING.md) — gateway, Vite proxy, Node.js routing maps, Python f-strings
-- [Bug fixes log](docs/BUGFIXES.md) — 11 root-cause fixes: endpoint extraction, scan error handling, graph matching, wiring detection
+## How we solve it (at a glance)
 
----
+| Piece | Approach |
+|--------|-----------|
+| Discovery | Tree-sitter / language-specific extractors over repo files (quick vs deep scan modes). |
+| Graph | Repos, endpoints, `CALLS` / `IMPORTS` / config edges; cross-repo matching of URLs to endpoints. |
+| Impact | Query graph for callers and affected repos/files; confidence reflects stale scans, unresolved calls, etc. |
+| PR engine | Uses **last full scan** + **PR-head** extraction for changed paths only (capped file count). |
+| Auth | GitHub OAuth → JWT for the app; **API keys** only for the public graph endpoint. |
 
-## What the Product Does
+## What we support
 
-**In one sentence:** Architect maps dependencies across your GitHub repos so you can see who is affected by API or code changes, assess risk before merging, and explain your architecture with AI.
+- **Languages (typical coverage):** Java (e.g. Spring), JavaScript/TypeScript (e.g. Express-style), Python (e.g. Flask/FastAPI), Ruby, Go — plus frontend **fetch/axios**-style calls where detected.
+- **Integrations:** GitHub (OAuth, repo connect, **webhook** for PRs, optional **commit status**, **Slack** alerts).
+- **AI (optional):** Anthropic — NL query/chat, docs generation, anomalies/tech-debt, and **optional PR “AI Insight”** text (does not change verdict or score).
+- **Product extras:** Impact per endpoint/repo, dashboard hints, **governance** / snapshots / org-style enterprise APIs, **public graph API** with keys.
 
-| Area | What it does |
-|------|----------------|
-| **Discovery** | Connect GitHub repos (OAuth). **Deep scan:** API endpoints (Java Spring Boot, Node.js Express, Python FastAPI/Flask, Ruby, Go), frontend API calls, backend inter-service HTTP calls (Java, Node.js, Python — including f-string URLs), **component imports** (INTERNAL / MONOREPO / EXTERNAL), **config** references, **runtime wiring facts** (Spring Cloud Gateway routes, Vite proxy, Node.js routing maps, Feign clients). **Quick scan:** endpoints + API calls only; no imports/config/wiring. Priority: controllers, routers, API files first. **SSE** progress stream during scan. |
-| **Graph & trace** | Interactive dependency graph (repos, API endpoints, edges: defines / calls / imports). **Package tree** per repo (component imports grouped by package). **Import trace** per file: what a file imports and where those components are used. |
-| **Impact & risk** | **Per endpoint/repo** and **dashboard** overview. **Real-time PR engine:** on `pull_request` (opened/updated), **async** pipeline — list changed files → **targeted scan** (PR head content only, capped file count) → extract APIs → match **existing graph** → aggregate cross-repo callers → **PR comment** + optional **GitHub commit status** (merge block) + **Slack**. See [Real-time PR engine](#real-time-pr-engine) and [`docs/PR_ENGINE.md`](docs/PR_ENGINE.md). |
-| **AI (Anthropic)** | **Query** (NL over graph), **chat**, **docs** per repo, **onboard** trace—all **SSE**. **Anomalies**, **tech-debt**, **history**. If `ANTHROPIC_API_KEY` is unset, streaming endpoints return **demo/mock** content; GET endpoints still run. |
-| **Enterprise** | **Organizations** and members. **Governance dashboard:** endpoint health (active / orphaned / deprecated), counts. **SOC2-style audit** report. **Dependency snapshots** and **diff** between snapshots for change tracking. |
-| **Auth & platform** | **GitHub OAuth** + **JWT** (`Authorization: Bearer`) for almost all `/api/*` routes. **API keys** are **not** accepted on those routes—only **JWT**. Keys unlock **`GET /api/public/v1/graph/{owner}`** via **`X-API-Key`**. Keys are created with **JWT** on `/api/keys`. Each key stores `rateLimitPerHour` (default 100). Integrations: **GitHub** (repos, webhook), **Slack** (risk alerts). |
-
-**Tech stack**
-
-- **Backend:** Java 21, Spring Boot 3.2, PostgreSQL, Flyway, JWT, WebFlux (GitHub API), Anthropic SDK, Bucket4j (dependency present).
-- **Frontend:** React 18, Vite, TypeScript, TanStack Query, Zustand, React Router, @xyflow/react, Tailwind, Axios.
-
----
+Stack: **Java 21**, **Spring Boot 3.2**, **PostgreSQL**, **Flyway**, **React (Vite)**.
 
 ## Prerequisites
 
-- **Java 21**
-- **Node.js** (v18+)
-- **PostgreSQL** (e.g. 14+)
-- **GitHub OAuth app** (client ID + secret)
-- **Optional:** Anthropic API key (for AI features), Slack webhook (for PR risk alerts)
+- Java 21, Maven, Node 18+, PostgreSQL 14+
+- GitHub OAuth app (callback: `http://localhost:8080/api/auth/callback`)
 
----
+## Run locally
 
-## Security (who can call what)
+1. **Database** — create DB/user (defaults match `application.yml`):
 
-| Path pattern | Access |
-|--------------|--------|
-| `/api/auth/**`, `/api/webhooks/**`, `/api/public/**`, `/actuator/health` | **Public** (no auth) |
-| All other `/api/*` | **JWT required** (Bearer token from GitHub login) |
+   ```bash
+   createdb architect
+   ```
 
-- **Public API** (`/api/public/v1/*`): **`X-API-Key`** for `GET /graph/{owner}`; **`/health`** is open. API keys do **not** authenticate the rest of `/api/*`—use **JWT** from GitHub login there.
+2. **Backend** (`http://localhost:8080`):
 
----
+   ```bash
+   cd backend && mvn spring-boot:run
+   ```
 
-## Setup & Run
+3. **Frontend** (`http://localhost:3000`):
 
-### 1. Database
+   ```bash
+   cd frontend && npm i && npm run dev
+   ```
 
-Create a database and user:
+Set at least: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `JWT_SECRET`, `DB_URL` / `DB_USERNAME` / `DB_PASSWORD`. See [docs/SETUP.md](docs/SETUP.md).
 
-```bash
-createdb architect
-# Or in psql: CREATE USER architect WITH PASSWORD 'architect'; CREATE DATABASE architect OWNER architect;
-```
-
-### 2. Backend
+## Docker
 
 ```bash
-cd backend
-# Set env or use .env at project root (see below)
-export DB_URL=jdbc:postgresql://localhost:5432/architect
-export DB_USERNAME=architect
-export DB_PASSWORD=architect
-export GITHUB_CLIENT_ID=your_github_client_id
-export GITHUB_CLIENT_SECRET=your_github_client_secret
-export GITHUB_REDIRECT_URI=http://localhost:8080/api/auth/callback
-export JWT_SECRET=your-256-bit-secret
-export FRONTEND_URL=http://localhost:3000
-
-./mvnw spring-boot:run
-# Or: mvn spring-boot:run
+docker compose up --build
 ```
 
-Backend runs at **http://localhost:8080**. Flyway runs on startup automatically:
+Requires the same GitHub (and optional Anthropic/Slack) variables in `.env`.
 
-| Migration | What it adds |
-|-----------|--------------|
-| V1 | Core schema: users, repos, api_endpoints, api_calls, dependency_edges |
-| V2 | AI, orgs, snapshots, audit logs, API keys |
-| V3 | component_imports: import_type, resolved_file; dependency_edges indexes |
-| V4 | pr_analyses, pr_analysis_runs |
-| V5 | api_calls: normalized_pattern, target_kind, external_host |
-| V6 | runtime_wiring_facts |
-| V7 | runtime_wiring_warnings |
-| V8 | github_etag_cache (ETag-based conditional GitHub API fetches) |
-| V9 | repos: last_scanned_commit_sha (incremental scan support) |
+## Documentation
 
-### 3. Frontend
+| Doc | Contents |
+|-----|----------|
+| [docs/SETUP.md](docs/SETUP.md) | Environment variables & OAuth |
+| [docs/API.md](docs/API.md) | HTTP API overview |
+| [docs/PR_ENGINE.md](docs/PR_ENGINE.md) | PR webhook, comments, flags |
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Auth
 
-Frontend runs at **http://localhost:3000** and proxies `/api` to `http://localhost:8080`.
+- **JWT** — most `/api/**` routes (from GitHub login).
+- **Public** — `/api/auth/**`, `/api/webhooks/**`, `/api/public/**`, `/actuator/health`.
+- **API keys** — only `GET /api/public/v1/graph/{owner}` via `X-API-Key`.
 
-### 4. Environment (optional .env at project root)
-
-You can use a `.env` in the project root; the backend reads:
-
-- `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` — PostgreSQL
-- `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_REDIRECT_URI` — OAuth
-- `JWT_SECRET`, `JWT_EXPIRATION_MS` — JWT
-- `FRONTEND_URL` — where the UI lives (for OAuth redirect)
-- `ANTHROPIC_API_KEY` — AI features
-- `SLACK_WEBHOOK_URL` — Slack notifications
-- `PR_MAX_FILES_SCAN` — max changed files parsed per PR (default 50)
-- `PR_POST_COMMIT_STATUS` — `true` to post GitHub commit status on PR head
-- `PR_FAIL_ON_REVIEW` — if status enabled, fail commit on REVIEW REQUIRED too
-
----
-
-## Real-time PR engine
-
-**Intent:** *On every PR → detect what may break across repos → before merge.*
-
-1. Webhook: `POST /api/webhooks/github` (`pull_request` **opened** / **synchronize**).
-2. **Changed files** from GitHub pulls API.
-3. **Targeted scan:** fetch each changed source file at **PR head SHA** (not full repo scan); run endpoint extraction; merge with DB endpoints in those paths.
-4. **Impact:** cross-repo **callers** from stored graph (`api_calls` → endpoints).
-5. **Comment** on PR (simple UX: verdict, risk, repos, call sites).
-6. **Optional:** `PR_POST_COMMIT_STATUS=true` → GitHub status on head (`failure` if BLOCKED; optional failure on REVIEW REQUIRED via `PR_FAIL_ON_REVIEW`).
-7. Runs **asynchronously** so the webhook returns quickly.
-
-**Requires:** repo connected in Architect + at least one **deep scan** so the graph has endpoints and callers. **Full detail:** [`docs/PR_ENGINE.md`](docs/PR_ENGINE.md).
-
-### Product phases (executed in code)
-
-| Phase | Focus | Key flags / APIs |
-|-------|--------|------------------|
-| **1 Core** | PR value first | `UI_CORE_ONLY=true` — hides Graph, AI, Governance, API Keys nav; webhook on Dashboard |
-| **2 Trust** | Why + confidence | PR comment **“Why exactly is this risky?”** + **confidence %**; tighter path matching |
-| **3 Stickiness** | Workflow | `pr_analysis_runs` table; **`GET /api/dashboard/risky-prs-week`**; Slack; commit status |
-| **4 Expansion** | Insights + CI | **`GET /api/insights/summary`**; **`POST /api/ai/explain-pr-risk`**; [`docs/ci/github-actions-rescan.yml`](docs/ci/github-actions-rescan.yml) |
-
-Full plan: **[`docs/ROADMAP.md`](docs/ROADMAP.md)**.
-
----
-
-## How to Test It
-
-### Demo polyglot stack (`Micro/`)
-
-The repo includes **six sample Git projects** under [`Micro/`](Micro/) (registry, gateway, UI, booking-service, user-service, catalog-service). They use **explicit HTTP** between services so Architect can show **cross-repo CALL** edges after you connect each GitHub repo and run a **deep** scan. Step-by-step: [`Micro/ARCHITECT_TESTING.md`](Micro/ARCHITECT_TESTING.md).
-
-### Manual (UI) flow
-
-1. **Login**  
-   - Open http://localhost:3000 → redirects to `/login`.  
-   - Click “Login with GitHub” → GitHub OAuth → callback stores JWT in `localStorage` and redirects to app.
-
-2. **Connect repos**  
-   - Dashboard: “Connect repos” → lists your GitHub repos → connect one or more.  
-   - Repos are stored per user (and optionally per org when using enterprise).
-
-3. **Scan**  
-   - From dashboard: default is **deep** (see [Scan modes](#scan-modes-quick-vs-deep)). API also supports `?mode=quick`.  
-   - Async scan clears prior repo data, fetches GitHub tree (priority files first), then extracts per mode. Poll `GET /api/v1/scan/{repoId}/status` or **SSE** `GET /api/v1/scan/{repoId}/stream` for events (`start`, `files_found`, `progress`, `endpoint_found`, `complete`, `failed`). Status leaves `SCANNING` when done.
-
-4. **Graph**  
-   - Go to **Graph** page.  
-   - Loads `/api/v1/graph` (nodes: repos + API endpoints; edges: defines, calls, imports).  
-   - Optional: `/api/v1/graph/tree/{repoId}` for a package-grouped component tree; `/api/v1/graph/trace?repoId=&file=` for import trace (what a file imports and where components are used).  
-   - Use filters and click nodes to see details and navigate to impact.
-
-5. **Impact**  
-   - Dashboard can show a risk overview via `GET /api/v1/impact/overview` (risk cards per repo, sorted by risk).  
-   - From graph or links: open impact for an endpoint or repo via `/api/v1/impact/endpoint/:id` or `/api/v1/impact/repo/:id`.
-
-6. **AI (optional)**  
-   - **AI** page: anomalies, tech-debt, history; generate docs for a repo.  
-   - Requires `ANTHROPIC_API_KEY` configured.
-
-7. **Governance (optional)**  
-   - **Governance** page: governance summary, SOC2-style audit report, create/list/diff dependency snapshots, orgs.
-
-8. **API keys (optional)**  
-   - Create/revoke with **JWT** on `/api/keys`. Use the raw key only as **`X-API-Key`** on **`GET /api/public/v1/graph/{owner}`** (path segment is ignored; graph is for the key owner).
-
-### Backend / automated tests
-
-```bash
-cd backend
-./mvnw test   # currently runs 0 tests — see docs/E2E_AND_TESTING.md
-```
-
-There are **no** Java tests under `src/test` yet and **no** Playwright/Cypress E2E. The **manual UI flow** above is the practical end-to-end check today.
-
-### API (e.g. curl)
-
-- **Auth:** Browser flow above; then use the JWT from `localStorage` or from callback URL.  
-- **With JWT:**
-  ```bash
-  export TOKEN="<jwt_from_login>"
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/auth/me
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/repos
-  curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/graph
-  ```
-- **With API key** (public API; use `X-API-Key` header):
-  ```bash
-  curl -s -H "X-API-Key: <your_api_key>" http://localhost:8080/api/public/v1/graph/me
-  curl -s http://localhost:8080/api/public/v1/health
-  ```
-
----
-
-## Frontend routes
-
-| Path | Page | Description |
-|------|------|-------------|
-| `/login` | LoginPage | Login with GitHub |
-| `/auth/callback` | AuthCallbackPage | OAuth callback; stores JWT, redirects to app |
-| `/` | DashboardPage | Dashboard; connect repos, trigger scan |
-| `/graph` | GraphPage | Dependency graph (repos, endpoints, edges) |
-| `/impact/:type/:id` | ImpactPage | Impact for endpoint or repo (`type`: `endpoint` \| `repo`) |
-| `/ai` | AiQueryPage | UI: **anomalies** + **tech-debt** tabs. Backend also exposes **query**, **chat**, **docs**, **onboard** (SSE)—not all wired in this UI. |
-| `/governance` | GovernancePage | Enterprise: governance, SOC2, snapshots, orgs |
-| `/api-keys` | ApiKeysPage | Create and revoke API keys |
-
-All routes except `/login` and `/auth/callback` require a valid JWT in `localStorage` (`architect_token`).
-
----
-
-## API Reference
-
-All endpoints under `/api` unless noted. **Auth:** JWT = `Authorization: Bearer <jwt>` (from login). API key = `X-API-Key: <key>` (public API only).
-
-| Method | Path | Auth | Description |
-|--------|------|------|--------------|
-| **Auth** | | | |
-| GET | `/api/auth/github` | — | Redirect to GitHub OAuth |
-| GET | `/api/auth/callback?code=...` | — | OAuth callback; redirects to frontend with `?token=<jwt>` |
-| GET | `/api/auth/me` | JWT | Current user (id, login, name, avatarUrl) |
-| **Repos** | | | |
-| GET | `/api/v1/repos` | JWT | List connected repos |
-| GET | `/api/v1/repos/github` | JWT | List user's GitHub repos (to connect) |
-| POST | `/api/v1/repos/connect` | JWT | Connect repo (body: githubId, fullName, name, language, defaultBranch, htmlUrl, private, description) |
-| DELETE | `/api/v1/repos/{repoId}` | JWT | Disconnect repo |
-| **Scan** | | | |
-| POST | `/api/v1/scan/{repoId}` | JWT | Start async scan for one repo. Optional `?mode=quick` or `?mode=deep` (default: deep) |
-| POST | `/api/v1/scan/all` | JWT | Start async scan for all user repos. Optional `?mode=quick` or `?mode=deep` |
-| GET | `/api/v1/scan/{repoId}/stream` | JWT | SSE stream: live scan progress events for the repo |
-| GET | `/api/v1/scan/{repoId}/status` | JWT | Scan status + endpoint/call/import counts |
-| **Graph & Impact** | | | |
-| GET | `/api/v1/graph` | JWT | Full dependency graph (nodes + edges) |
-| GET | `/api/v1/graph/tree/{repoId}` | JWT | Package-grouped tree of components for a repo (tree, totalImports, byType) |
-| GET | `/api/v1/graph/trace?repoId=&file=` | JWT | Origin trace: imports in a file + where each component is used (imports, usedBy) |
-| GET | `/api/v1/impact/endpoint/{endpointId}` | JWT | Impact for an API endpoint (numeric id) |
-| GET | `/api/v1/impact/repo/{repoId}` | JWT | Impact for a repo (numeric id) |
-| GET | `/api/v1/impact/overview` | JWT | Risk overview: lightweight risk cards for all scanned repos (sorted by risk, for dashboard) |
-| **AI** (Anthropic; SSE = streaming) | | | |
-| POST | `/api/ai/query` | JWT | NL query over graph (SSE); body: `{ "question": "..." }` |
-| POST | `/api/ai/chat` | JWT | Chat (SSE); body: `{ "message": "..." }` |
-| POST | `/api/ai/docs/{repoId}` | JWT | Generate architecture docs for repo (SSE) |
-| POST | `/api/ai/onboard` | JWT | Onboarding trace (SSE); body: `{ "feature": "auth" }` |
-| GET | `/api/ai/anomalies` | JWT | List detected anomalies |
-| GET | `/api/ai/tech-debt` | JWT | Tech-debt summary |
-| GET | `/api/ai/history` | JWT | AI query history |
-| **Enterprise** | | | |
-| GET | `/api/enterprise/governance` | JWT | Governance dashboard |
-| GET | `/api/enterprise/audit/soc2` | JWT | SOC2-style audit report |
-| GET | `/api/enterprise/orgs/{orgId}/audit` | JWT | Org audit logs (?page=0) |
-| POST | `/api/enterprise/orgs` | JWT | Create org; body: `{ "name": "..." }` |
-| GET | `/api/enterprise/orgs` | JWT | List my orgs |
-| GET | `/api/enterprise/orgs/{orgId}/members` | JWT | List org members |
-| POST | `/api/enterprise/orgs/{orgId}/members` | JWT | Add member; body: `{ "userId", "role" }` |
-| DELETE | `/api/enterprise/orgs/{orgId}/members/{targetUserId}` | JWT | Remove member |
-| POST | `/api/enterprise/snapshots` | JWT | Create dependency snapshot; body: `{ "label": "..." }` |
-| GET | `/api/enterprise/snapshots` | JWT | List snapshots |
-| GET | `/api/enterprise/snapshots/{id}/diff/{compareId}` | JWT | Diff two snapshots |
-| **API Keys** | | | |
-| GET | `/api/keys` | JWT | List my API keys |
-| POST | `/api/keys` | JWT | Create key; body: `{ "name", "scopes" }` (default scopes: `read:graph`) |
-| DELETE | `/api/keys/{keyId}` | JWT | Revoke key |
-| **Public API** (key in header) | | | |
-| GET | `/api/public/version` | — | Product version JSON (`product`, `version`, `publicApi`) |
-| GET | `/api/public/v1/health` | — | Health + version |
-| GET | `/api/public/v1/graph/{owner}` | X-API-Key | Full graph for the **API key’s user** (`owner` path unused) |
-| **Webhooks** | | | |
-| POST | `/api/webhooks/github` | — | GitHub webhook (e.g. pull_request → impact analysis, PR comment, Slack) |
-
----
-
-## Application Flow (High Level)
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 1. AUTH                                                                      │
-│    User → Login with GitHub → OAuth callback → JWT stored → All API calls    │
-│    use Bearer JWT. API key only for /api/public/v1/graph.                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 2. CONNECT REPOS                                                             │
-│    GET /api/v1/repos/github (list GitHub repos)                               │
-│    POST /api/v1/repos/connect (connect repo by githubId, fullName, etc.)      │
-│    Repos stored per user (and optionally org_id).                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 3. SCAN (async)                                                              │
-│    POST /api/v1/scan/{repoId}?mode=quick|deep (default deep). Same for /all.  │
-│    SSE: GET /api/v1/scan/{repoId}/stream.                                     │
-│    DEEP: all scannable extensions; imports + config; IMPORTS edges + meta. │
-│    QUICK: skips .yaml/.yml/.xml/.properties/.json; no imports/config;       │
-│    CALLS edges only. Priority: *controller*, *router*, *api*, etc. first.    │
-│    Both: clear repo scan data → GitHub tree → endpoints + api_calls →        │
-│    buildDependencyEdges (CALLS always; IMPORTS only in DEEP).                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 4. GRAPH                                                                     │
-│    GET /api/v1/graph — full graph. GET /api/v1/graph/tree/{repoId} — component│
-│    tree per repo. GET /api/v1/graph/trace?repoId=&file= — imports + usedBy.   │
-│    GraphBuilderService: nodes (REPO, API_ENDPOINT), edges (DEFINES, CALLS,    │
-│    IMPORTS). Frontend: @xyflow/react; filters and node details.               │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 5. IMPACT                                                                    │
-│    GET /api/v1/impact/overview — risk cards for all scanned repos (dashboard).│
-│    GET /api/v1/impact/endpoint/{id} or GET /api/v1/impact/repo/{id} — full impact│
-│    for one endpoint or repo (callers/consumers affected).                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ 6. GITHUB WEBHOOK — PR engine (async)                                      │
-│    POST /api/webhooks/github → PRAnalysisService:                           │
-│    PR files → fetch PR head per changed file (cap) → extract endpoints →    │
-│    match graph → impact → PR comment (FRONTEND_URL) → optional commit status │
-│    → Slack if risky.                                                         │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────────┐
-│ OTHER FLOWS                                                                  │
-│ • AI: GET/POST /api/ai/* (anomalies, tech-debt, history, query/chat/docs/    │
-│   onboard via SSE). Requires ANTHROPIC_API_KEY.                             │
-│ • Enterprise: /api/enterprise/* (governance, audit, snapshots, orgs, members)│
-│ • API Keys: JWT on /api/keys. X-API-Key on public graph only.               │
-│ • PR comment links use `FRONTEND_URL` (see PR engine section).               │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Project Layout (concise)
-
-```
-Architect/
-├── backend/                    # Spring Boot
-│   ├── src/main/java/com/architect/
-│   │   ├── controller/         # Auth, Repo, Scan, Graph, Analysis(Impact), Ai, Enterprise, ApiKey, Webhook, PublicApi
-│   │   ├── service/            # GitHub, RepoScanner, ScanProgress, GraphBuilder, Impact, Ai, …
-│   │   ├── repository/        # JPA repos for all entities
-│   │   ├── model/             # User, Repo, ApiEndpoint, ApiCall, ComponentImport, ...
-│   │   ├── dto/               # GraphDto, NodeDto, EdgeDto, ScanStatusDto, ImpactDto, ...
-│   │   ├── config/            # AppProperties, Security, CORS, WebClient
-│   │   └── security/          # JWT filter + token provider
-│   └── src/main/resources/
-│       ├── application.yml
-│       └── db/migration/      # V1__init, V2__ai_enterprise, V3__component_enrichment
-├── frontend/
-│   ├── src/
-│   │   ├── pages/             # Dashboard, Graph, Impact, Login, AuthCallback, Ai, Governance, ApiKeys
-│   │   ├── components/        # graph (nodes, edges, filters), panels, layout, ui
-│   │   ├── hooks/             # useGraph, useRepos, useImpact
-│   │   ├── store/             # graphStore (Zustand)
-│   │   ├── services/          # api.ts (auth, repo, scan, graph, impact, ai, enterprise, apiKey)
-│   │   └── types/
-│   ├── vite.config.ts         # proxy /api → localhost:8080
-│   └── package.json
-├── .env                       # Local env (DB, GitHub, JWT, etc.)
-└── README.md                  # This file
-```
-
----
-
-## Scan modes (quick vs deep)
-
-| | **Quick** | **Deep** (default) |
-|---|-----------|-------------------|
-| **API endpoints** | Yes | Yes |
-| **Frontend API calls** | Yes | Yes |
-| **Skips scanning** | `.yaml`, `.yml`, `.xml`, `.properties`, `.json` | No (unless in skip dirs like `node_modules`) |
-| **Component imports** | No | Yes (INTERNAL / MONOREPO / EXTERNAL + `resolvedFile`) |
-| **Config dependencies** | No | Yes |
-| **CALLS edges** (cross-repo) | Yes | Yes |
-| **IMPORTS edges** | No | Yes (with metadata on `dependency_edges`) |
-
----
-
-## Frontend vs backend API usage
-
-The **React app** (`frontend/src/services/api.ts`) calls:
-
-| Client helper | Backend | Notes |
-|---------------|---------|--------|
-| `authApi`, `repoApi` | `/api/auth/*`, `/api/v1/repos/*` | — |
-| `scanApi.triggerScan` / `scanAll` | `POST /scan/{id}`, `POST /scan/all` | **No `?mode=`** → backend default **deep** |
-| `scanApi.getStatus` | `GET /scan/{id}/status` | Does not use SSE stream |
-| `graphApi` | `/graph`, `/graph/tree/{id}`, `/graph/trace` | — |
-| `impactApi` | `/impact/*` including `/overview` | — |
-| `aiApi` | GET anomalies, tech-debt, history; POST docs (SSE) | **Not wired in api.ts:** `/ai/query`, `/ai/chat`, `/ai/onboard` (available via curl/UI if added) |
-| `enterpriseApi`, `apiKeyApi` | `/enterprise/*`, `/keys` | — |
-
-To use **quick scan** or **SSE** from scripts, call the API directly with `?mode=quick` or open an EventSource to `/api/v1/scan/{repoId}/stream` with JWT.
-
----
-
-## Summary
-
-- **Product:** Architect maps cross-repo dependencies so teams see who is affected by API or code changes. **Deep** scan: endpoints, calls, imports (typed), config, IMPORTS edges; **quick**: faster, calls + endpoints only. Graph, tree, trace, impact overview, PR webhook + Slack, AI (real or demo without Anthropic key), enterprise, JWT app + X-API-Key public graph.
-- **Run:** PostgreSQL + backend on 8080 + frontend on 3000; set GitHub OAuth and JWT (and optionally Anthropic/Slack).
-- **Test:** Login via UI → connect repos → scan (optional `?mode=quick|deep`, or subscribe to scan stream) → open Graph and Impact; use impact overview on dashboard; run `mvn test` for backend; call `/api/*` with JWT; use `X-API-Key` for `/api/public/v1/graph/{owner}` and `/api/public/v1/health`.
-- **Flow:** Auth → Connect repos → Scan (async; quick/deep, SSE; DEEP resolves imports→repos) → Graph / tree / trace → Impact; optional AI, Enterprise, keys (JWT to manage, X-API-Key for public graph only), GitHub webhook (PR comment link in code uses localhost—override for prod).
+Product version is exposed at `GET /api/public/version`.

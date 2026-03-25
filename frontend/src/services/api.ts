@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { clearAuthToken, getAuthToken } from '../authToken'
 import type { Repo, GithubRepo, GraphDto, ScanStatus, ImpactDto, User } from '../types'
 
 // ── Versioned API client (all /api/v1/** endpoints) ──────────────────────────
@@ -17,7 +18,7 @@ const authAxios = axios.create({
 
 // Attach JWT to every versioned request
 const attachToken = (config: any) => {
-  const token = localStorage.getItem('architect_token')
+  const token = getAuthToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
   return config
 }
@@ -27,7 +28,7 @@ authAxios.interceptors.request.use(attachToken)
 // Auto-logout on 401
 const handle401 = (err: any) => {
   if (err.response?.status === 401) {
-    localStorage.removeItem('architect_token')
+    clearAuthToken()
     window.location.href = '/login'
   }
   return Promise.reject(err)

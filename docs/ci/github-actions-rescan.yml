@@ -1,6 +1,6 @@
-# Phase 4 — Trigger Architect to refresh graph after merge to main.
+# Phase 4 — Trigger Zerqis to refresh graph after merge to main.
 # Set secrets: ARCHITECT_API_URL (e.g. https://api.example.com), ARCHITECT_JWT (long-lived or CI token).
-name: Architect rescan
+name: Zerqis rescan
 on:
   push:
     branches: [main]

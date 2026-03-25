@@ -22,7 +22,7 @@ public class VersionController {
     @GetMapping("/version")
     public ResponseEntity<Map<String, String>> version() {
         return ResponseEntity.ok(Map.of(
-                "product", "Architect",
+                "product", "Zerqis",
                 "version", appProperties.getProductVersion(),
                 "publicApi", "v1"
         ));

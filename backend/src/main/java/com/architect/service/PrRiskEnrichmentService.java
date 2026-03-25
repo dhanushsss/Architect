@@ -37,12 +37,12 @@ public class PrRiskEnrichmentService {
 
         if (deps > 0) {
             factors.add(String.format(
-                "**Cross-service usage:** Architect’s graph shows **%d** other connected repo(s) with **%d** tracked call site(s) into APIs touched by this PR.",
+                "**Cross-service usage:** Zerqis’s graph shows **%d** other connected repo(s) with **%d** tracked call site(s) into APIs touched by this PR.",
                 deps, Math.max(callSites, 1)));
         }
 
         if (scenario == PrCommentFormatter.Scenario.ORPHAN_API_RISK) {
-            factors.add("**No tracked callers:** Either this API is unused, or clients use dynamic URLs / mobile / external apps Architect does not index.");
+            factors.add("**No tracked callers:** Either this API is unused, or clients use dynamic URLs / mobile / external apps Zerqis does not index.");
         }
 
         if (scenario == PrCommentFormatter.Scenario.WIDE_CASCADING || scenario == PrCommentFormatter.Scenario.CRITICAL_CROSS_SERVICE) {
@@ -75,7 +75,7 @@ public class PrRiskEnrichmentService {
             }
         }
 
-        factors.add("**Internal vs external:** Callers listed are **repos you connected** in Architect; traffic from unconnected repos is invisible.");
+        factors.add("**Internal vs external:** Callers listed are **repos you connected** in Zerqis; traffic from unconnected repos is invisible.");
 
         if (impact.getConfidenceScore() == null) {
             double confidence = computeConfidence(repo, impact, scenario, prHeadFilesFetched, changedFileCount);

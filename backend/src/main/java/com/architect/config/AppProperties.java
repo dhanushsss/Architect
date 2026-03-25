@@ -60,5 +60,10 @@ public class AppProperties {
     @Data
     public static class Anthropic {
         private String apiKey;
+        /** Wall-clock budget for PR AI insight LLM call (ms). */
+        private long prRiskExplanationTimeoutMs = 3000L;
+        private long prRiskExplanationMaxTokens = 300L;
+        /** 0.0–1.0; default 0.25 for deterministic-ish JSON. */
+        private double prRiskExplanationTemperature = 0.25;
     }
 }

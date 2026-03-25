@@ -1,6 +1,8 @@
 package com.architect.service;
 
 import com.architect.config.AppProperties;
+import com.architect.dto.AiRiskExplanation;
+import com.architect.dto.AiRiskInput;
 import com.architect.dto.ImpactDto;
 import com.architect.model.PrAnalysisRun;
 import com.architect.model.Repo;
@@ -35,6 +37,7 @@ public class PRAnalysisService {
     private final PrRiskEnrichmentService prRiskEnrichmentService;
     private final PrAnalysisRunRepository prAnalysisRunRepository;
     private final ObjectMapper objectMapper;
+    private final AiRiskExplanationService aiRiskExplanationService;
 
     @Async
     public void processPullRequest(Repo repo, User user, int prNumber, String headSha,
@@ -74,7 +77,11 @@ public class PRAnalysisService {
             String frontend = appProperties.getFrontendUrl() != null
                 ? appProperties.getFrontendUrl().replaceAll("/$", "")
                 : "http://localhost:3000";
-            String comment = PrCommentFormatter.buildComment(scenario, impact, changedPaths.size(), prUrl, frontend);
+            AiRiskInput aiRiskInput = AiRiskInput.fromImpact(impact);
+            AiRiskExplanation aiInsight = aiRiskExplanationService.explainRiskForPullRequest(
+                    owner, repoName, prNumber, headSha, aiRiskInput);
+            String comment = PrCommentFormatter.buildComment(
+                    scenario, impact, changedPaths.size(), prUrl, frontend, aiInsight);
             log.info("PR #{} comment scenario={}", prNumber, scenario);
 
             persistPrRun(user, repo, prNumber, prUrl, headSha, scenario, impact);
@@ -88,7 +95,7 @@ public class PRAnalysisService {
                 slackNotificationService.sendImpactAlert(fullName, prTitle, impact);
             }
 
-            log.info("PR #{} Architect: verdict={} score={} repos={}",
+            log.info("PR #{} Zerqis: verdict={} score={} repos={}",
                 prNumber, impact.getVerdict(), impact.getNumericScore(), impact.getDependentsCount());
         } catch (Exception e) {
             log.error("PR analysis failed for {}/#{}", fullName, prNumber, e);
@@ -106,9 +113,9 @@ public class PRAnalysisService {
         } else {
             state = "success";
         }
-        String desc = "Architect: " + impact.getVerdict() + " (" + String.format("%.1f", impact.getNumericScore()) + "/10)";
+        String desc = "Zerqis: " + impact.getVerdict() + " (" + String.format("%.1f", impact.getNumericScore()) + "/10)";
         gitHubService.createCommitStatus(token, owner, repoName, sha, state, desc, prUrl,
-            "architect/pr-impact");
+            "zerqis/pr-impact");
     }
 
     private void persistPrRun(User user, Repo repo, int prNumber, String prUrl, String headSha,

@@ -18,7 +18,6 @@ function useScanProgress(repoId: number | null) {
 
   useEffect(() => {
     if (!repoId) return
-    const token = localStorage.getItem('architect_token')
     const es = new EventSource(`/api/v1/scan/${repoId}/stream`, {})
     esRef.current = es
     setActive(true)

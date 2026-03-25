@@ -3,6 +3,9 @@ package com.architect.repository;
 import com.architect.model.Repo;
 import com.architect.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
 import java.util.List;
 import java.util.Optional;
 
@@ -12,4 +15,7 @@ public interface RepoRepository extends JpaRepository<Repo, Long> {
     Optional<Repo> findByUserAndGithubId(User user, Long githubId);
     Optional<Repo> findByFullName(String fullName);
     List<Repo> findByUserId(Long userId);
+
+    @Query("SELECT r FROM Repo r JOIN FETCH r.user WHERE r.id = :id")
+    Optional<Repo> findByIdWithUser(@Param("id") Long id);
 }

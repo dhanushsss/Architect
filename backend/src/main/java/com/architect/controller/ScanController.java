@@ -8,8 +8,10 @@ import com.architect.repository.ApiCallRepository;
 import com.architect.repository.ApiEndpointRepository;
 import com.architect.repository.ComponentImportRepository;
 import com.architect.repository.RepoRepository;
+import com.architect.scan.ScanType;
 import com.architect.service.RepoScannerService;
 import com.architect.service.ScanProgressService;
+import com.architect.service.ScanQueueService;
 
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +30,7 @@ public class ScanController {
 
     private final RepoRepository repoRepository;
     private final RepoScannerService repoScannerService;
+    private final ScanQueueService scanQueueService;
     private final ScanProgressService scanProgressService;
     private final ApiEndpointRepository apiEndpointRepository;
     private final ApiCallRepository apiCallRepository;
@@ -53,13 +56,13 @@ public class ScanController {
             }
         }
 
-        repoScannerService.scanRepo(repo, user.getAccessToken(), scanMode);
+        scanQueueService.enqueue(repo.getId(), user.getId(), ScanType.MANUAL, scanMode);
 
         return ResponseEntity.accepted().body(ScanStatusDto.builder()
             .repoId(repo.getId())
             .repoName(repo.getName())
-            .status("SCANNING")
-            .message(scanMode.name() + " scan started")
+            .status("QUEUED")
+            .message(scanMode.name() + " scan scheduled")
             .build());
     }
 
@@ -79,12 +82,12 @@ public class ScanController {
         RepoScannerService.ScanMode scanMode = resolveScanMode(mode);
 
         List<ScanStatusDto> statuses = repoRepository.findByUser(user).stream().map(repo -> {
-            repoScannerService.scanRepo(repo, user.getAccessToken(), scanMode);
+            scanQueueService.enqueue(repo.getId(), user.getId(), ScanType.MANUAL, scanMode);
             return ScanStatusDto.builder()
                 .repoId(repo.getId())
                 .repoName(repo.getName())
-                .status("SCANNING")
-                .message(scanMode.name() + " scan queued")
+                .status("QUEUED")
+                .message(scanMode.name() + " scan scheduled")
                 .build();
         }).toList();
         return ResponseEntity.accepted().body(statuses);

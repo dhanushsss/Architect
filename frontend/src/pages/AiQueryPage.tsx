@@ -144,9 +144,17 @@ export default function AiQueryPage() {
                     <p className={`text-3xl font-bold mt-1 ${riskColor(techDebt.overallRisk)}`}>{techDebt.overallRisk}</p>
                   </div>
                   <div className="flex gap-4 text-center">
-                    <div>
+                    <div
+                      className="cursor-help"
+                      title="Endpoints with no scanned callers from your connected repos — may be unused, external-only, or use URL patterns we could not match."
+                    >
                       <p className="text-2xl font-bold text-yellow-400">{techDebt.orphanEndpoints}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">Orphan endpoints</p>
+                      <p className="text-xs text-slate-400 mt-0.5 inline-flex items-center gap-1">
+                        Orphan endpoints
+                        <span className="text-slate-500" aria-hidden>
+                          ⓘ
+                        </span>
+                      </p>
                     </div>
                     <div>
                       <p className="text-2xl font-bold text-red-400">{techDebt.brokenCalls}</p>
