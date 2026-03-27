@@ -38,6 +38,12 @@ public class ImpactDto {
     /** UNRESOLVED outbound calls from affected repos (PR confidence deduction). */
     private Integer unresolvedCallCount;
 
+    /** Exact endpoint matches (method + normalized path) found during PR analysis. */
+    private Integer directMatchCount;
+
+    /** Non-exact but plausible matches (wildcard/suffix/method fallback) found during PR analysis. */
+    private Integer inferredMatchCount;
+
     /** Repos in the analyzed scope with last scan older than 48h. */
     private Integer staleRepoCount;
 

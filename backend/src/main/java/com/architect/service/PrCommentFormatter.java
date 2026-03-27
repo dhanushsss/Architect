@@ -70,13 +70,16 @@ public final class PrCommentFormatter {
         String api = primaryApiLine(impact);
         String impactUrl = frontendBase + "/impact/repo/" + impact.getSubjectId();
 
-        return switch (scenario) {
+        String body = switch (scenario) {
             case WIDE_CASCADING -> formatWide(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case CRITICAL_CROSS_SERVICE -> formatCritical(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case MEDIUM_INTERNAL -> formatMedium(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case ORPHAN_API_RISK -> formatOrphan(impact, api, prUrl, impactUrl, aiInsight);
             case SAFE_REFACTOR -> formatSafe(impact, prUrl, impactUrl, aiInsight);
         };
+        return body
+                + "\n\n---\n"
+                + "_Was this useful? React 👍 or 👎 to this comment — it helps us improve Zerqis accuracy._";
     }
 
     private static void appendWhyExact(StringBuilder sb, ImpactDto impact, AiRiskExplanation aiInsight) {
@@ -142,32 +145,46 @@ public final class PrCommentFormatter {
         if (impact.getConfidenceScore() == null) {
             return;
         }
-        int conf = impact.getConfidenceScore().intValue();
-        int unresolved = impact.getUnresolvedCallCount() != null ? impact.getUnresolvedCallCount() : 0;
-        int stale = impact.getStaleRepoCount() != null ? impact.getStaleRepoCount() : 0;
-        int unscanned = impact.getUnscannedRepoCount() != null ? impact.getUnscannedRepoCount() : 0;
-        int notFetched = impact.getChangedFilesNotFetched() != null ? impact.getChangedFilesNotFetched() : 0;
+        sb.append("\n").append(buildConfidenceBreakdown(impact)).append("\n");
+    }
 
-        sb.append("\n**Confidence:** ").append(conf).append("%\n");
-        if (unresolved > 0 || stale > 0 || unscanned > 0 || notFetched > 0) {
-            sb.append("**Unknowns:**\n");
-            if (unresolved > 0) {
-                sb.append("- ⚠️ ").append(unresolved).append(" API call(s) could not be resolved\n");
-            }
-            if (stale > 0) {
-                sb.append("- ⚠️ ").append(stale).append(" repo(s) have stale data (>48h)\n");
-            }
-            if (unscanned > 0) {
-                sb.append("- ⚠️ ").append(unscanned).append(" repo(s) have not been deeply scanned yet\n");
-            }
-            if (notFetched > 0) {
-                sb.append("- ⚠️ ").append(notFetched).append(" changed file(s) could not be fetched at PR head\n");
-            }
+    static String buildConfidenceBreakdown(ImpactDto result) {
+        int score = result.getConfidenceScore() == null ? 0 : result.getConfidenceScore().intValue();
+        int direct = result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0;
+        int inferred = result.getInferredMatchCount() != null ? result.getInferredMatchCount() : 0;
+        int unresolved = result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0;
+        int stale = result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("**Confidence: ").append(score).append("%**\n");
+
+        List<String> lines = new java.util.ArrayList<>();
+        if (direct > 0) {
+            lines.add(direct + " direct match(es)       ● strong signal");
         }
-        if (stale > 0 || unscanned > 0) {
-            sb.append("\n⚠️ Data may be stale. Re-run deep scan before merge-critical decisions.\n");
+        if (inferred > 0) {
+            lines.add(inferred + " inferred match(es)     ◐ medium signal");
         }
-        sb.append("\n");
+        if (unresolved > 0) {
+            lines.add(unresolved + " unresolved call(s)     ○ unknown");
+        }
+        if (stale > 0) {
+            lines.add(stale + " repo(s) stale (>72h)   ○ unknown");
+        }
+
+        for (int i = 0; i < lines.size(); i++) {
+            String prefix = (i == lines.size() - 1) ? "└── " : "├── ";
+            sb.append(prefix).append(lines.get(i)).append("\n");
+        }
+        return sb.toString();
+    }
+
+    static boolean isTrulySafe(ImpactDto result) {
+        int direct = result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0;
+        int unresolved = result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0;
+        int stale = result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0;
+        int confidence = result.getConfidenceScore() != null ? result.getConfidenceScore().intValue() : 0;
+        return direct == 0 && unresolved <= 1 && stale == 0 && confidence >= 80;
     }
 
     private static String formatCritical(ImpactDto impact, int repos, int depFiles, String api,
@@ -216,7 +233,9 @@ public final class PrCommentFormatter {
 
     private static String formatSafe(ImpactDto impact, String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## ✅ Zerqis: Safe to Merge\n\n");
+        sb.append(isTrulySafe(impact)
+                ? "## ✅ Zerqis: Safe to Merge\n\n"
+                : "## ✅ Zerqis: Low risk — verify manually before merging\n\n");
         sb.append("**No cross-repo impact detected** in Zerqis’s dependency graph for this change.\n\n");
         sb.append("This change appears **isolated** relative to connected services.\n\n");
         appendWhyExact(sb, impact, aiInsight);

@@ -1,0 +1,53 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "architect-backend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/backend && export $(cat /Users/dhanushs/Desktop/Architect/.env | grep -v '^#' | xargs) && /opt/homebrew/bin/mvn spring-boot:run -q"],
+      "port": 8080
+    },
+    {
+      "name": "architect-frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/frontend && VITE_API_BASE_URL=http://localhost:8080 PATH=/usr/local/bin:$PATH /usr/local/bin/npm run dev -- --port 3000"],
+      "port": 3000
+    },
+    {
+      "name": "booking-registry",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/booking-registry && /usr/local/bin/node server.js"],
+      "port": 8761
+    },
+    {
+      "name": "api-gateway",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/api-gateway && /usr/local/bin/node server.js"],
+      "port": 8880
+    },
+    {
+      "name": "booking-service",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/booking-service && /usr/local/bin/node server.js"],
+      "port": 3001
+    },
+    {
+      "name": "user-service",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/user-service && /opt/homebrew/bin/mvn spring-boot:run -q"],
+      "port": 3002
+    },
+    {
+      "name": "catalog-service",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/catalog-service && python3 main.py"],
+      "port": 3003
+    },
+    {
+      "name": "booking-ui",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/dhanushs/Desktop/Architect/Micro/booking-ui && PATH=/usr/local/bin:$PATH /usr/local/bin/npm run dev"],
+      "port": 5173
+    }
+  ]
+}

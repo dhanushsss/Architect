@@ -22,6 +22,8 @@ class PrCommentFormatterTest {
                         ImpactDto.AffectedItem.builder().id("2").name("frontend").type("REPO").detail("x").build()))
                 .changedEndpoints(List.of("GET /api/users/profile"))
                 .confidenceScore(72.0)
+                .directMatchCount(2)
+                .inferredMatchCount(1)
                 .unresolvedCallCount(2)
                 .staleRepoCount(1)
                 .changedFilesNotFetched(1)
@@ -34,10 +36,11 @@ class PrCommentFormatterTest {
                 "https://example/pr/1",
                 "http://localhost:3000");
 
-        assertTrue(out.contains("**Confidence:** 72%"));
-        assertTrue(out.contains("2 API call(s) could not be resolved"));
-        assertTrue(out.contains("1 repo(s) have stale data (>48h)"));
-        assertTrue(out.contains("Data may be stale"));
+        assertTrue(out.contains("**Confidence: 72%**"));
+        assertTrue(out.contains("2 direct match(es)"));
+        assertTrue(out.contains("1 inferred match(es)"));
+        assertTrue(out.contains("2 unresolved call(s)"));
+        assertTrue(out.contains("1 repo(s) stale (>72h)"));
     }
 
     @Test
@@ -92,6 +95,7 @@ class PrCommentFormatterTest {
                 "http://localhost:3000",
                 null);
         assertFalse(out.contains("### 🤖 AI Insight"));
+        assertTrue(out.contains("Was this useful? React 👍 or 👎 to this comment"));
     }
 }
 

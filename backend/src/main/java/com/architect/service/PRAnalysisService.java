@@ -5,9 +5,11 @@ import com.architect.dto.AiRiskExplanation;
 import com.architect.dto.AiRiskInput;
 import com.architect.dto.ImpactDto;
 import com.architect.model.PrAnalysisRun;
+import com.architect.model.PrPrediction;
 import com.architect.model.Repo;
 import com.architect.model.User;
 import com.architect.repository.PrAnalysisRunRepository;
+import com.architect.repository.PrPredictionRepository;
 import com.architect.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -37,6 +39,7 @@ public class PRAnalysisService {
     private final AppProperties appProperties;
     private final PrRiskEnrichmentService prRiskEnrichmentService;
     private final PrAnalysisRunRepository prAnalysisRunRepository;
+    private final PrPredictionRepository prPredictionRepository;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
     private final AiRiskExplanationService aiRiskExplanationService;
@@ -90,6 +93,7 @@ public class PRAnalysisService {
             log.info("PR #{} comment scenario={}", prNumber, scenario);
 
             persistPrRun(freshUser, repo, prNumber, prUrl, headSha, scenario, impact);
+            logPrediction(prNumber, fullName, headSha, impact);
             gitHubService.createPrComment(token, owner, repoName, prNumber, comment);
 
             if (appProperties.getPrEngine().isPostCommitStatus() && headSha != null && !headSha.isBlank()) {
@@ -147,6 +151,52 @@ public class PRAnalysisService {
         } catch (Exception e) {
             log.warn("Could not persist PR analysis run: {}", e.getMessage());
         }
+    }
+
+    private void logPrediction(int prNumber, String repoFullName, String headSha, ImpactDto result) {
+        try {
+            List<String> affectedRepoNames = result.getAffectedRepos() == null
+                    ? List.of()
+                    : result.getAffectedRepos().stream()
+                    .map(ImpactDto.AffectedItem::getName)
+                    .filter(Objects::nonNull)
+                    .distinct()
+                    .toList();
+            Map<String, Object> breakdown = new LinkedHashMap<>();
+            breakdown.put("confidencePct", result.getConfidenceScore() != null ? result.getConfidenceScore().intValue() : 0);
+            breakdown.put("directMatchCount", result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0);
+            breakdown.put("inferredMatchCount", result.getInferredMatchCount() != null ? result.getInferredMatchCount() : 0);
+            breakdown.put("unresolvedCallCount", result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0);
+            breakdown.put("staleRepoCount", result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0);
+            breakdown.put("unscannedRepoCount", result.getUnscannedRepoCount() != null ? result.getUnscannedRepoCount() : 0);
+            breakdown.put("changedFilesNotFetched", result.getChangedFilesNotFetched() != null ? result.getChangedFilesNotFetched() : 0);
+
+            prPredictionRepository.save(PrPrediction.builder()
+                    .prNumber(prNumber)
+                    .repoFullName(repoFullName)
+                    .predictedRisk(toPredictedRisk(result))
+                    .confidencePct(result.getConfidenceScore() != null ? result.getConfidenceScore().intValue() : 0)
+                    .directMatchCount(result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0)
+                    .inferredMatchCount(result.getInferredMatchCount() != null ? result.getInferredMatchCount() : 0)
+                    .unresolvedCallCount(result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0)
+                    .staleRepoCount(result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0)
+                    .affectedRepoNames(affectedRepoNames.toArray(new String[0]))
+                    .signalBreakdown(objectMapper.writeValueAsString(breakdown))
+                    .prHeadSha(headSha)
+                    .build());
+        } catch (Exception e) {
+            log.warn("Could not persist PR prediction for {}/#{}: {}", repoFullName, prNumber, e.getMessage());
+        }
+    }
+
+    private static String toPredictedRisk(ImpactDto result) {
+        if ("BLOCKED".equalsIgnoreCase(result.getVerdict())) {
+            return "BLOCKED";
+        }
+        if ("REVIEW REQUIRED".equalsIgnoreCase(result.getVerdict())) {
+            return "REVIEW_REQUIRED";
+        }
+        return "LOW";
     }
 
     private static boolean isScannable(String path) {
