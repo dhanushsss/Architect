@@ -6,6 +6,13 @@ Authenticated app routes use header: `Authorization: Bearer <jwt>`.
 
 Versioned app API lives under **`/api/v1`**.
 
+## What this API supports
+
+- Repo onboarding and scanning
+- Graph and impact analysis
+- PR webhook-driven risk analysis
+- Optional AI explanation and enterprise/governance endpoints
+
 ## Public
 
 | Method | Path | Notes |

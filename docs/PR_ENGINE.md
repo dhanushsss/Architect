@@ -12,8 +12,11 @@
 2. Fetch a **capped** set of file contents at **PR head** and extract endpoints.
 3. Join with **existing graph** in PostgreSQL (`api_calls` → endpoints).
 4. Build **impact** → **verdict** / numeric score (core logic; unchanged by AI).
-5. Post **PR comment** (Markdown). Optional **commit status** and **Slack** if configured.
-6. A **full-repo scan** for that repo may be **enqueued** as a **PR-priority** job (see scan queue) so the graph stays fresh.
+5. Build **confidence breakdown** (direct matches, inferred matches, unresolved calls, stale repos).
+6. Post **PR comment** (Markdown). Optional **AI Insight** section is explanation-only.
+7. Persist prediction signals to `pr_predictions` for calibration (`predicted_risk`, confidence, signal counts, affected repos, JSON breakdown).
+8. Optional **commit status** and **Slack** if configured.
+9. A **full-repo scan** for that repo may be **enqueued** as a **PR-priority** job (see scan queue) so the graph stays fresh.
 
 Analysis runs **asynchronously** after the webhook returns `200`.
 
@@ -34,6 +37,7 @@ Analysis runs **asynchronously** after the webhook returns `200`.
 - `PRAnalysisService` — orchestration
 - `ImpactAnalysisService#analyzePullRequestTargeted` — targeted impact
 - `PrCommentFormatter` — comment body
+- `PrPrediction` / `PrPredictionRepository` — prediction persistence
 
 **Prerequisite:** connect the repo in Zerqis and run at least one **deep scan** so callers and endpoints exist in the DB.
 

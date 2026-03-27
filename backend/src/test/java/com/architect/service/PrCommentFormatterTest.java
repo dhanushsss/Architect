@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -96,6 +97,52 @@ class PrCommentFormatterTest {
                 null);
         assertFalse(out.contains("### 🤖 AI Insight"));
         assertTrue(out.contains("Was this useful? React 👍 or 👎 to this comment"));
+    }
+
+    @Test
+    void safeLabel_onlyWhenAllTrustConditionsHold() {
+        ImpactDto safe = ImpactDto.builder()
+                .subjectId("1")
+                .dependentsCount(0)
+                .changedEndpoints(List.of())
+                .confidenceScore(80.0)
+                .directMatchCount(0)
+                .unresolvedCallCount(1)
+                .staleRepoCount(0)
+                .build();
+        String safeOut = PrCommentFormatter.buildComment(
+                PrCommentFormatter.classify(safe), safe, 0, "https://example/pr/4", "http://localhost:3000");
+        assertTrue(safeOut.contains("Safe to Merge"));
+
+        ImpactDto notSafe = ImpactDto.builder()
+                .subjectId("1")
+                .dependentsCount(0)
+                .changedEndpoints(List.of())
+                .confidenceScore(79.0)
+                .directMatchCount(0)
+                .unresolvedCallCount(1)
+                .staleRepoCount(0)
+                .build();
+        String notSafeOut = PrCommentFormatter.buildComment(
+                PrCommentFormatter.classify(notSafe), notSafe, 0, "https://example/pr/5", "http://localhost:3000");
+        assertTrue(notSafeOut.contains("Low risk — verify manually before merging"));
+    }
+
+    @Test
+    void confidenceBreakdown_onlyShowsPositiveSignalRows() {
+        ImpactDto impact = ImpactDto.builder()
+                .confidenceScore(88.0)
+                .directMatchCount(1)
+                .inferredMatchCount(0)
+                .unresolvedCallCount(2)
+                .staleRepoCount(0)
+                .build();
+        String breakdown = PrCommentFormatter.buildConfidenceBreakdown(impact);
+        assertTrue(breakdown.contains("1 direct match(es)"));
+        assertTrue(breakdown.contains("2 unresolved call(s)"));
+        assertFalse(breakdown.contains("inferred match(es)"));
+        assertFalse(breakdown.contains("repo(s) stale"));
+        assertEquals(2, breakdown.lines().filter(l -> l.startsWith("├──") || l.startsWith("└──")).count());
     }
 }
 
