@@ -52,6 +52,7 @@ public class PrAnalysisRun {
     private String affectedRepoNames;
 
     @Column(name = "risk_factors_json", columnDefinition = "jsonb")
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     private String riskFactorsJson;
 
     @Column(name = "created_at")

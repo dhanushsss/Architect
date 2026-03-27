@@ -8,6 +8,7 @@ import com.architect.model.PrAnalysisRun;
 import com.architect.model.Repo;
 import com.architect.model.User;
 import com.architect.repository.PrAnalysisRunRepository;
+import com.architect.repository.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -36,13 +37,17 @@ public class PRAnalysisService {
     private final AppProperties appProperties;
     private final PrRiskEnrichmentService prRiskEnrichmentService;
     private final PrAnalysisRunRepository prAnalysisRunRepository;
+    private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
     private final AiRiskExplanationService aiRiskExplanationService;
 
     @Async
     public void processPullRequest(Repo repo, User user, int prNumber, String headSha,
                                    String prTitle, String prUrl, String fullName) {
-        String token = user.getAccessToken();
+        // Re-fetch user within the async thread — Hibernate proxy from calling thread has no session.
+        User freshUser = userRepository.findById(user.getId())
+            .orElseThrow(() -> new RuntimeException("User not found: " + user.getId()));
+        String token = freshUser.getAccessToken();
         String[] parts = fullName.split("/");
         String owner = parts[0];
         String repoName = parts[1];
@@ -84,7 +89,7 @@ public class PRAnalysisService {
                     scenario, impact, changedPaths.size(), prUrl, frontend, aiInsight);
             log.info("PR #{} comment scenario={}", prNumber, scenario);
 
-            persistPrRun(user, repo, prNumber, prUrl, headSha, scenario, impact);
+            persistPrRun(freshUser, repo, prNumber, prUrl, headSha, scenario, impact);
             gitHubService.createPrComment(token, owner, repoName, prNumber, comment);
 
             if (appProperties.getPrEngine().isPostCommitStatus() && headSha != null && !headSha.isBlank()) {
