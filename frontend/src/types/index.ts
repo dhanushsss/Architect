@@ -91,8 +91,86 @@ export interface ImpactDto {
   subjectType: string
   subjectLabel: string
   riskScore: 'HIGH' | 'MEDIUM' | 'LOW'
+  numericScore: number
+  verdict: string
   dependentsCount: number
   affectedRepos: AffectedItem[]
   affectedFiles: AffectedItem[]
   orphanEndpoints?: string[]
+  changedEndpoints?: string[]
+  prOrphanEndpoints?: string[]
+  // Confidence breakdown
+  confidenceScore?: number
+  directMatchCount?: number
+  inferredMatchCount?: number
+  unresolvedCallCount?: number
+  staleRepoCount?: number
+  unscannedRepoCount?: number
+  changedFilesNotFetched?: number
+  riskFactors?: string[]
+}
+
+export interface PredictionAccuracy {
+  repoFullName: string | null
+  totalPredictions: number
+  resolvedPredictions: number
+  correctPredictions: number
+  incorrectPredictions: number
+  revertedCount: number
+  hotfixedCount: number
+  accuracyPct: number | null
+}
+
+// ── Atlas ─────────────────────────────────────────────────────────────────────
+
+export interface RepoHealthDto {
+  repoId: number
+  repoName: string
+  repoUrl: string
+  language: string | null
+  healthScore: number
+  healthLabel: 'HEALTHY' | 'FAIR' | 'POOR'
+  /** Single most impactful reason for this score — shown directly on the card */
+  primaryDiagnosis: string
+  totalEndpoints: number
+  orphanEndpoints: number
+  utilizedEndpoints: number
+  orphanRatio: number
+  unresolvedCalls: number
+  inboundDeps: number
+  outboundDeps: number
+  scanStatus: string
+  lastScannedAt: string | null
+  staleDays: number | null
+  topOrphanEndpoints: string[]
+}
+
+export interface AtlasDashboardDto {
+  systemHealthScore: number
+  systemHealthLabel: 'HEALTHY' | 'FAIR' | 'POOR'
+  /** All repos sorted worst-first */
+  repoHealthList: RepoHealthDto[]
+  /** Single most critical repo — for quick-link in summary header */
+  mostCriticalRepo: RepoHealthDto | null
+  criticalRepoCount: number
+  totalEndpoints: number
+  utilizedEndpoints: number
+  totalDeadEndpoints: number
+  unresolvedCallsTotal: number
+  staleRepoCount: number
+  neverScannedCount: number
+}
+
+export interface DeadEndpointDto {
+  endpointId: number
+  repoId: number
+  repoName: string
+  repoUrl: string
+  httpMethod: string
+  path: string
+  filePath: string
+  lineNumber: number | null
+  framework: string | null
+  language: string | null
+  daysSinceScanned: number | null
 }

@@ -31,6 +31,8 @@ public class FrontendCallDetectorService {
         results.addAll(detectChainedHttp(content, filePath));
         results.addAll(detectAngularHttp(content, filePath));
         results.addAll(detectVueHttp(content, filePath));
+        results.addAll(detectTanstackQuery(content, filePath));
+        results.addAll(detectSwr(content, filePath));
         return results;
     }
 
@@ -154,6 +156,66 @@ public class FrontendCallDetectorService {
                     call.setUrlPattern(url);
                     call.setHttpMethod("GET");
                     call.setCallType("vue-http");
+                    call.setFilePath(filePath);
+                    call.setLineNumber(i + 1);
+                    results.add(call);
+                }
+            }
+        }
+        return results;
+    }
+
+    /** TanStack Query / React Query: useQuery({ queryFn: () => fetch('/api/...') }) */
+    private List<DetectedCall> detectTanstackQuery(String content, String filePath) {
+        List<DetectedCall> results = new ArrayList<>();
+        String[] lines = content.split("\n", -1);
+        // queryKey/queryFn patterns often have fetch/axios inside arrow functions
+        Pattern p = Pattern.compile(
+                "(?:useQuery|useMutation|useInfiniteQuery|useSuspenseQuery)\\s*\\(",
+                Pattern.CASE_INSENSITIVE);
+        Pattern fetchInside = Pattern.compile(
+                "(?:fetch|axios\\s*\\.\\s*(?:get|post|put|delete|patch))\\s*\\(\\s*([\"'`])(.+?)\\1",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        for (int i = 0; i < lines.length; i++) {
+            if (p.matcher(lines[i]).find()) {
+                // Scan current line and next 5 lines for the actual fetch call
+                int end = Math.min(i + 6, lines.length);
+                StringBuilder block = new StringBuilder();
+                for (int j = i; j < end; j++) block.append(lines[j]).append("\n");
+                Matcher fm = fetchInside.matcher(block);
+                while (fm.find()) {
+                    String url = collapseTemplate(fm.group(2));
+                    if (!isSkippableUrl(url)) {
+                        DetectedCall call = new DetectedCall();
+                        call.setUrlPattern(url);
+                        call.setHttpMethod(detectMethod(block.toString()));
+                        call.setCallType("tanstack-query");
+                        call.setFilePath(filePath);
+                        call.setLineNumber(i + 1);
+                        results.add(call);
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
+    /** SWR: useSWR('/api/users', fetcher) */
+    private List<DetectedCall> detectSwr(String content, String filePath) {
+        List<DetectedCall> results = new ArrayList<>();
+        String[] lines = content.split("\n", -1);
+        Pattern p = Pattern.compile(
+                "(?:useSWR|useSWRMutation|useSWRInfinite)\\s*\\(\\s*([\"'`])(.+?)\\1",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+        for (int i = 0; i < lines.length; i++) {
+            Matcher m = p.matcher(lines[i]);
+            while (m.find()) {
+                String url = collapseTemplate(m.group(2));
+                if (!isSkippableUrl(url)) {
+                    DetectedCall call = new DetectedCall();
+                    call.setUrlPattern(url);
+                    call.setHttpMethod("GET");
+                    call.setCallType("swr");
                     call.setFilePath(filePath);
                     call.setLineNumber(i + 1);
                     results.add(call);

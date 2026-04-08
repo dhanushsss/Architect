@@ -1,10 +1,12 @@
 import { RiskBadge } from '../ui/Badge'
 import Spinner from '../ui/Spinner'
+import ConfidenceBreakdown from './ConfidenceBreakdown'
 import type { ImpactDto } from '../../types'
 
 interface Props {
   impact?: ImpactDto
   loading?: boolean
+  lastScannedAt?: string | null
 }
 
 export default function ImpactPanel({ impact, loading }: Props) {
@@ -33,6 +35,9 @@ export default function ImpactPanel({ impact, loading }: Props) {
         </p>
       </div>
 
+      {/* Confidence Breakdown */}
+      <ConfidenceBreakdown impact={impact} />
+
       {/* Affected Repos */}
       {impact.affectedRepos.length > 0 && (
         <div className="card">
@@ -58,6 +63,18 @@ export default function ImpactPanel({ impact, loading }: Props) {
                 <span className="text-slate-300 font-mono">{file.name}</span>
                 <span className="text-slate-500 ml-2">{file.detail}</span>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Changed endpoints */}
+      {impact.changedEndpoints && impact.changedEndpoints.length > 0 && (
+        <div className="card">
+          <h3 className="font-semibold text-white mb-3">Changed Endpoints ({impact.changedEndpoints.length})</h3>
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {impact.changedEndpoints.map((ep, i) => (
+              <div key={i} className="text-xs text-blue-400 font-mono">{ep}</div>
             ))}
           </div>
         </div>
