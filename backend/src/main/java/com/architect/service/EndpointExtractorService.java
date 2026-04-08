@@ -148,61 +148,241 @@ public class EndpointExtractorService {
         }
     }
 
-    // ── Node / Express / NestJS parser ────────────────────────────────────────
+    // ── Node / Express / NestJS / Fastify / Hono / Next.js parser ─────────────
 
     private static class NodeParser {
 
-        // Express / Fastify / Hapi: app.get('/path'), router.post('/path'), server.route(...)
+        // ─ Express / Fastify / Hapi / Koa / Hono ──────────────────────────────
+        // app.get('/path')  router.post('/path')  server.put('/')  fastify.delete('/route')
         private static final Pattern EXPRESS = Pattern.compile(
-            "(?:app|router|server|fastify)\\s*\\.\\s*(get|post|put|delete|patch|options|head)\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]",
+            "(?:app|router|server|fastify|hono)\\s*\\.\\s*(get|post|put|delete|patch|options|head|all)\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]",
             Pattern.CASE_INSENSITIVE
         );
 
-        // NestJS controller decorators: @Get('/path')  @Post()  @Put(':id')
+        // app.route('/path').get(...).post(...)  — chained route definitions
+        private static final Pattern EXPRESS_ROUTE = Pattern.compile(
+            "(?:app|router)\\s*\\.\\s*route\\s*\\(\\s*[\"'`]([^\"'`]+)[\"'`]\\s*\\)",
+            Pattern.CASE_INSENSITIVE
+        );
+        // Methods on a chained .route(): .get(handler).post(handler)
+        private static final Pattern ROUTE_CHAIN_METHOD = Pattern.compile(
+            "\\.(get|post|put|delete|patch|all)\\s*\\(",
+            Pattern.CASE_INSENSITIVE
+        );
+
+        // Fastify prefix registration: fastify.register(routes, { prefix: '/api/v1' })
+        private static final Pattern FASTIFY_REGISTER = Pattern.compile(
+            "(?:fastify|app|server)\\s*\\.\\s*register\\s*\\([^,]+,\\s*\\{[^}]*prefix\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+        );
+
+        // ─ NestJS ─────────────────────────────────────────────────────────────
+        // @Controller('prefix') — class-level prefix
+        private static final Pattern NESTJS_CONTROLLER = Pattern.compile(
+            "@Controller\\s*\\(\\s*[\"'`]([^\"'`]*)[\"'`]\\s*\\)",
+            Pattern.CASE_INSENSITIVE
+        );
+
+        // @Get('/path')  @Post()  @Put(':id')  @All()
         private static final Pattern NESTJS = Pattern.compile(
-            "@(Get|Post|Put|Delete|Patch|Options|Head)\\s*\\(\\s*(?:[\"'`]([^\"'`]*)[\"'`])?\\s*\\)",
+            "@(Get|Post|Put|Delete|Patch|Options|Head|All)\\s*\\(\\s*(?:[\"'`]([^\"'`]*)[\"'`])?\\s*\\)",
             Pattern.CASE_INSENSITIVE
         );
 
-        // Hapi: method: 'GET', path: '/path'
+        // ─ Hapi ───────────────────────────────────────────────────────────────
         private static final Pattern HAPI = Pattern.compile(
             "method\\s*:\\s*[\"']([A-Z]+)[\"'].*?path\\s*:\\s*[\"']([^\"']+)[\"']",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL
+        );
+
+        // ─ Next.js API routes (App Router): export async function GET/POST/... ─
+        private static final Pattern NEXTJS_EXPORT = Pattern.compile(
+            "export\\s+(?:async\\s+)?function\\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\\s*\\(",
+            Pattern.CASE_INSENSITIVE
+        );
+
+        // ─ tRPC router definitions ─────────────────────────────────────────────
+        private static final Pattern TRPC_PROCEDURE = Pattern.compile(
+            "\\.(query|mutation)\\s*\\(",
+            Pattern.CASE_INSENSITIVE
+        );
+        // Key in a tRPC router object: someKey: publicProcedure.query(...)
+        private static final Pattern TRPC_ROUTER_KEY = Pattern.compile(
+            "(\\w+)\\s*:\\s*(?:public|protected|\\w+)Procedure",
+            Pattern.CASE_INSENSITIVE
         );
 
         List<ExtractedEndpoint> parse(String content, String filePath) {
             List<ExtractedEndpoint> results = new ArrayList<>();
             String[] lines = content.split("\n");
             boolean isNestFile = content.contains("@Controller") || content.contains("@Module");
+            boolean isTs = filePath.endsWith(".ts") || filePath.endsWith(".tsx");
+            String lang = isTs ? "typescript" : "javascript";
 
+            // ── NestJS controller prefix ──────────────────────────────────────
+            String nestPrefix = "";
+            if (isNestFile) {
+                Matcher cp = NESTJS_CONTROLLER.matcher(content);
+                if (cp.find()) {
+                    nestPrefix = cp.group(1);
+                }
+            }
+
+            // ── Next.js file-based routing detection ──────────────────────────
+            String nextRoute = inferNextJsRoute(filePath);
+            if (nextRoute != null) {
+                // App Router exported handlers: export function GET / POST / etc.
+                for (int i = 0; i < lines.length; i++) {
+                    Matcher nm = NEXTJS_EXPORT.matcher(lines[i]);
+                    if (nm.find()) {
+                        results.add(ep(nm.group(1), nextRoute, i + 1, "Next.js", lang));
+                    }
+                }
+                // Pages Router default export → GET handler
+                if (results.isEmpty() && content.contains("export default")) {
+                    results.add(ep("GET", nextRoute, 1, "Next.js", lang));
+                }
+                // Next.js route files are self-contained; skip remaining patterns
+                if (!results.isEmpty()) return results;
+            }
+
+            // ── Fastify prefix tracking ───────────────────────────────────────
+            List<String> fastifyPrefixes = new ArrayList<>();
+            Matcher fpM = FASTIFY_REGISTER.matcher(content);
+            while (fpM.find()) {
+                fastifyPrefixes.add(fpM.group(1));
+            }
+
+            // ── Line-by-line extraction ───────────────────────────────────────
+            String currentRouteBase = null;
             for (int i = 0; i < lines.length; i++) {
                 String line = lines[i];
                 int lineNo = i + 1;
 
+                // Skip comment lines
+                String trimmed = line.trim();
+                if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+
+                // NestJS decorators (with controller prefix)
                 if (isNestFile) {
                     Matcher nm = NESTJS.matcher(line);
                     if (nm.find()) {
                         String path = nm.groupCount() >= 2 && nm.group(2) != null ? nm.group(2) : "";
-                        results.add(ep(nm.group(1), "/" + path, lineNo, "NestJS", "typescript"));
+                        String fullPath = nestPrefix.isEmpty() ? "/" + path : joinPaths("/" + nestPrefix, path);
+                        results.add(ep(nm.group(1), fullPath, lineNo, "NestJS", "typescript"));
                         continue;
                     }
                 }
 
+                // app.route('/path') — sets base for chained methods
+                Matcher routeM = EXPRESS_ROUTE.matcher(line);
+                if (routeM.find()) {
+                    currentRouteBase = routeM.group(1);
+                    // Check for chained methods on the same line
+                    Matcher chainM = ROUTE_CHAIN_METHOD.matcher(line.substring(routeM.end()));
+                    while (chainM.find()) {
+                        String method = chainM.group(1);
+                        String fw = isTs ? "Express/TS" : "Express/Node";
+                        results.add(ep(method, currentRouteBase, lineNo, fw, lang));
+                    }
+                    continue;
+                }
+
+                // Chained methods on subsequent lines (.get(...).post(...))
+                if (currentRouteBase != null && trimmed.startsWith(".")) {
+                    Matcher chainM = ROUTE_CHAIN_METHOD.matcher(line);
+                    boolean found = false;
+                    while (chainM.find()) {
+                        String method = chainM.group(1);
+                        String fw = isTs ? "Express/TS" : "Express/Node";
+                        results.add(ep(method, currentRouteBase, lineNo, fw, lang));
+                        found = true;
+                    }
+                    if (found) continue;
+                } else if (currentRouteBase != null && !trimmed.isEmpty()) {
+                    currentRouteBase = null; // chain ended
+                }
+
+                // tRPC router keys
+                Matcher trpcM = TRPC_ROUTER_KEY.matcher(line);
+                if (trpcM.find() && (content.contains("createTRPCRouter") || content.contains("router("))) {
+                    String key = trpcM.group(1);
+                    Matcher procM = TRPC_PROCEDURE.matcher(line);
+                    String method = procM.find() && "mutation".equalsIgnoreCase(procM.group(1)) ? "POST" : "GET";
+                    results.add(ep(method, "/trpc/" + key, lineNo, "tRPC", lang));
+                    continue;
+                }
+
+                // Standard Express/Fastify/Hono patterns
                 Matcher em = EXPRESS.matcher(line);
                 if (em.find()) {
-                    String fw = filePath.endsWith(".ts") ? "Express/TS" : "Express/Node";
-                    results.add(ep(em.group(1), em.group(2), lineNo, fw, "javascript"));
+                    String fw;
+                    if (line.contains("hono") || content.contains("import { Hono") || content.contains("new Hono")) {
+                        fw = "Hono";
+                    } else if (line.contains("fastify") || content.contains("import fastify") || content.contains("require('fastify')")) {
+                        fw = "Fastify";
+                    } else {
+                        fw = isTs ? "Express/TS" : "Express/Node";
+                    }
+                    results.add(ep(em.group(1), em.group(2), lineNo, fw, lang));
                 }
             }
 
-            // Hapi multiline route objects — scan whole content
+            // ── Hapi multiline route objects ──────────────────────────────────
             Matcher hm = HAPI.matcher(content);
             while (hm.find()) {
                 int lineNo = countLines(content, hm.start());
-                results.add(ep(hm.group(1), hm.group(2), lineNo, "Hapi", "javascript"));
+                results.add(ep(hm.group(1), hm.group(2), lineNo, "Hapi", lang));
+            }
+
+            // ── Apply Fastify prefixes to routes if detected ──────────────────
+            if (!fastifyPrefixes.isEmpty() && !results.isEmpty()) {
+                String prefix = fastifyPrefixes.get(0); // use first registered prefix
+                for (ExtractedEndpoint endpoint : results) {
+                    if ("Fastify".equals(endpoint.getFramework())) {
+                        endpoint.setPath(joinPaths(prefix, endpoint.getPath()));
+                    }
+                }
             }
 
             return results;
+        }
+
+        /**
+         * Infer API route from Next.js file path conventions.
+         * Handles both Pages Router (pages/api/...) and App Router (app/api/.../route.ts).
+         */
+        private static String inferNextJsRoute(String filePath) {
+            // App Router: app/api/users/[id]/route.ts → /api/users/:id
+            int appIdx = filePath.indexOf("/app/");
+            if (appIdx >= 0) {
+                String relative = filePath.substring(appIdx + 5); // strip "/app/"
+                if (relative.matches("(?i).*route\\.(ts|js|tsx|jsx)$")) {
+                    String route = relative.replaceFirst("/?route\\.(ts|js|tsx|jsx)$", "");
+                    route = convertNextDynamicSegments(route);
+                    return normalizePath(route);
+                }
+            }
+            // Pages Router: pages/api/users/[id].ts → /api/users/:id
+            int pagesIdx = filePath.indexOf("/pages/api/");
+            if (pagesIdx >= 0) {
+                String relative = filePath.substring(pagesIdx + 7); // strip "/pages/"
+                relative = relative.replaceFirst("\\.(ts|js|tsx|jsx)$", "");
+                if (relative.endsWith("/index")) {
+                    relative = relative.substring(0, relative.length() - 6);
+                }
+                relative = convertNextDynamicSegments(relative);
+                return normalizePath(relative);
+            }
+            return null;
+        }
+
+        /** Convert [id] → :id, [...slug] → :slug*, [[...optional]] → :optional* */
+        private static String convertNextDynamicSegments(String path) {
+            return path
+                .replaceAll("\\[\\[\\.\\.\\.(\\w+)\\]\\]", ":$1*")   // [[...optional]]
+                .replaceAll("\\[\\.\\.\\.(\\w+)\\]", ":$1*")          // [...slug]
+                .replaceAll("\\[(\\w+)\\]", ":$1");                    // [id]
         }
     }
 

@@ -207,11 +207,14 @@ public class ImpactAnalysisService {
         Set<String> changedPathSet = new HashSet<>(changedFilePaths);
         Set<Long> endpointIds = new LinkedHashSet<>();
         LinkedHashSet<String> changedEpLabels = new LinkedHashSet<>();
+        int directMatches = 0;
+        int inferredMatches = 0;
 
         for (ApiEndpoint ep : apiEndpointRepository.findByRepo(repo)) {
             if (changedPathSet.contains(ep.getFilePath())) {
                 endpointIds.add(ep.getId());
                 changedEpLabels.add(ep.getHttpMethod() + " " + ep.getPath());
+                directMatches++;
             }
         }
 
@@ -222,11 +225,21 @@ public class ImpactAnalysisService {
             for (EndpointExtractorService.ExtractedEndpoint ex : endpointExtractorService.extract(content, path)) {
                 if (ex.getPath() == null || ex.getHttpMethod() == null) continue;
                 changedEpLabels.add(ex.getHttpMethod() + " " + ex.getPath());
+                boolean matched = false;
                 for (ApiEndpoint dbEp : apiEndpointRepository.findByRepo(repo)) {
                     if (pathsMatchForPr(dbEp.getPath(), ex.getPath()) && methodsMatch(dbEp.getHttpMethod(), ex.getHttpMethod())) {
                         endpointIds.add(dbEp.getId());
+                        if (isExactEndpointMatch(dbEp, ex)) {
+                            directMatches++;
+                        } else {
+                            inferredMatches++;
+                        }
+                        matched = true;
                         break;
                     }
+                }
+                if (!matched) {
+                    inferredMatches++;
                 }
             }
         }
@@ -319,6 +332,8 @@ public class ImpactAnalysisService {
             .prOrphanEndpoints(new ArrayList<>(prOrphanEndpoints))
             .confidenceScore((double) confidence)
             .unresolvedCallCount(unresolved)
+            .directMatchCount(Math.max(0, directMatches))
+            .inferredMatchCount(Math.max(0, inferredMatches))
             .build();
     }
 
@@ -383,6 +398,13 @@ public class ImpactAnalysisService {
     private static boolean methodsMatch(String dbMethod, String exMethod) {
         if (dbMethod == null || exMethod == null) return false;
         return dbMethod.equalsIgnoreCase(exMethod) || "REQUEST".equalsIgnoreCase(dbMethod);
+    }
+
+    private static boolean isExactEndpointMatch(ApiEndpoint dbEp, EndpointExtractorService.ExtractedEndpoint ex) {
+        if (dbEp == null || ex == null) return false;
+        return normalizePath(dbEp.getPath()).equals(normalizePath(ex.getPath()))
+                && dbEp.getHttpMethod() != null
+                && dbEp.getHttpMethod().equalsIgnoreCase(ex.getHttpMethod());
     }
 
     // ── risk scoring ──────────────────────────────────────────────────────────

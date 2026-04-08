@@ -10,6 +10,7 @@ Teams run many services and repos. **Who calls which API?** **What breaks if thi
 2. **Store** a dependency **graph** in PostgreSQL and expose it in a **UI** (graph, trees, traces, impact views).
 3. **Assess PR risk** via a **GitHub webhook**: changed files → targeted analysis → **comment + score** on the PR (core logic is deterministic; optional **AI** adds a short human explanation only).
 4. **Operate safely at scale**: scans go through a **DB-backed queue** with limits (PR-typed jobs prioritized over manual scans), multi-instance friendly coordination without Redis/Kafka.
+5. **Calibrate trust over time**: every PR analysis logs prediction signals (risk, confidence, match quality, unknowns) to support future quality tuning.
 
 ## How we solve it (at a glance)
 
@@ -30,6 +31,26 @@ Teams run many services and repos. **Who calls which API?** **What breaks if thi
 
 Stack: **Java 21**, **Spring Boot 3.2**, **PostgreSQL**, **Flyway**, **React (Vite)**.
 
+## End-to-end: how Zerqis works in production
+
+1. **Ingest**
+   - User connects repos with GitHub OAuth.
+   - Zerqis runs deep/incremental scans and builds endpoint/call/import graph data.
+2. **Keep graph fresh**
+   - Scan requests are enqueued in `scan_tasks`.
+   - Workers claim jobs with DB locking (`FOR UPDATE SKIP LOCKED`) and enforce global/per-user concurrency.
+3. **Analyze PR**
+   - GitHub webhook (`pull_request opened/synchronize`) triggers async PR analysis.
+   - Zerqis fetches changed files, extracts endpoints at PR head, and joins with the stored graph.
+4. **Compute risk**
+   - Deterministic logic computes verdict (`LOW` / `REVIEW REQUIRED` / `BLOCKED`) and confidence.
+   - Confidence is shown with breakdown signals (direct/inferred/unknown/stale) for explainability.
+5. **Explain and publish**
+   - Zerqis posts a PR comment with scenario, impact, confidence breakdown, and optional AI insight.
+   - Optional commit status and Slack notifications are sent based on config.
+6. **Log prediction**
+   - Zerqis stores each PR prediction in `pr_predictions` for later calibration and accuracy tracking.
+
 ## Prerequisites
 
 - Java 21, Maven, Node 18+, PostgreSQL 14+
@@ -40,7 +61,7 @@ Stack: **Java 21**, **Spring Boot 3.2**, **PostgreSQL**, **Flyway**, **React (Vi
 1. **Database** — create DB/user (defaults match `application.yml`):
 
    ```bash
-   createdb architect
+   createdb zerqis
    ```
 
 2. **Backend** (`http://localhost:8080`):

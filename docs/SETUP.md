@@ -2,6 +2,14 @@
 
 Zerqis needs GitHub access to list/connect repos and (optionally) receive PR webhooks. The app stores scan results in PostgreSQL. For product context (problem, solution, supported stacks), see the [root README](../README.md).
 
+## End-to-end setup checklist
+
+1. Configure GitHub OAuth app.
+2. Set required backend environment variables.
+3. Start PostgreSQL and backend/frontend.
+4. Connect repos in Zerqis UI and run an initial deep scan.
+5. (Optional) configure webhook + AI + Slack.
+
 ## GitHub OAuth app
 
 | Field | Value |
@@ -16,7 +24,7 @@ Zerqis needs GitHub access to list/connect repos and (optionally) receive PR web
 | `GITHUB_CLIENT_ID` | OAuth client ID |
 | `GITHUB_CLIENT_SECRET` | OAuth secret |
 | `JWT_SECRET` | Long random string (signing JWTs) |
-| `DB_URL` | e.g. `jdbc:postgresql://localhost:5432/architect` |
+| `DB_URL` | e.g. `jdbc:postgresql://localhost:5432/zerqis` |
 | `DB_USERNAME` / `DB_PASSWORD` | PostgreSQL credentials |
 
 ## Common optional variables

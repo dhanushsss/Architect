@@ -5,6 +5,7 @@ import com.architect.repository.RepoRepository;
 import com.architect.scan.ScanType;
 import com.architect.service.GithubOAuthCallbackService;
 import com.architect.service.PRAnalysisService;
+import com.architect.service.PrOutcomeTrackerService;
 import com.architect.service.RepoScannerService;
 import com.architect.service.ScanQueueService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -33,6 +35,7 @@ public class WebhookController {
 
     private final RepoRepository repoRepository;
     private final PRAnalysisService prAnalysisService;
+    private final PrOutcomeTrackerService prOutcomeTrackerService;
     private final GithubOAuthCallbackService githubOAuthCallbackService;
     private final AppProperties appProperties;
     private final ScanQueueService scanQueueService;
@@ -120,7 +123,6 @@ public class WebhookController {
     @SuppressWarnings("unchecked")
     private void handlePullRequestEvent(Map<String, Object> payload) {
         String action = (String) payload.get("action");
-        if (!"opened".equals(action) && !"synchronize".equals(action)) return;
 
         Map<String, Object> prData = (Map<String, Object>) payload.get("pull_request");
         Map<String, Object> repoData = (Map<String, Object>) payload.get("repository");
@@ -133,6 +135,30 @@ public class WebhookController {
 
         Map<String, Object> head = (Map<String, Object>) prData.get("head");
         String headSha = head != null ? (String) head.get("sha") : null;
+
+        // ── Closed-loop feedback: track merges and detect reverts/hotfixes ────
+        if ("closed".equals(action) && Boolean.TRUE.equals(prData.get("merged"))) {
+            String mergeSha = (String) prData.get("merge_commit_sha");
+            java.time.OffsetDateTime mergedAt = null;
+            try {
+                String mergedAtStr = (String) prData.get("merged_at");
+                if (mergedAtStr != null) {
+                    mergedAt = java.time.OffsetDateTime.parse(mergedAtStr);
+                }
+            } catch (Exception ignored) { /* best effort */ }
+
+            prOutcomeTrackerService.onPrMerged(fullName, prNumber, mergeSha, mergedAt);
+
+            // Check if this merged PR is itself a revert/hotfix of a previous prediction
+            prOutcomeTrackerService.onPrOpenedOrMerged(fullName, prNumber, prTitle, List.of());
+            return;
+        }
+
+        // ── Existing: analyze opened/synchronize PRs ─────────────────────────
+        if (!"opened".equals(action) && !"synchronize".equals(action)) return;
+
+        // Check if new PR is a revert/hotfix for a tracked prediction
+        prOutcomeTrackerService.onPrOpenedOrMerged(fullName, prNumber, prTitle, List.of());
 
         repoRepository.findByFullName(fullName).ifPresentOrElse(
             repo -> {

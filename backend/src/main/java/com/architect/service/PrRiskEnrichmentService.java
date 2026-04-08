@@ -68,7 +68,7 @@ public class PrRiskEnrichmentService {
             factors.add("**Freshness:** This repo has **never been fully scanned** — run a deep scan for best accuracy.");
         } else {
             long hours = Duration.between(scanned, LocalDateTime.now()).toHours();
-            if (hours > 48) {
+            if (hours > 72) {
                 factors.add(String.format("**Stale graph:** Last full scan was **%d hours ago** — rescan to reduce false positives/negatives.", hours));
             } else if (hours > 24) {
                 factors.add("**Graph age:** Last scan **" + hours + " hours ago** — consider rescanning before high-risk merges.");
@@ -134,7 +134,7 @@ public class PrRiskEnrichmentService {
 
         int stale = 0;
         int unscanned = 0;
-        LocalDateTime staleCutoff = LocalDateTime.now().minusHours(48);
+        LocalDateTime staleCutoff = LocalDateTime.now().minusHours(72);
         for (Long repoId : repoIds) {
             Repo r = repoRepository.findById(repoId).orElse(null);
             if (r == null || r.getLastScannedAt() == null) {

@@ -122,6 +122,21 @@ public class BackendHttpCallDetectorService {
             "\\s*([\"'`])(.+?)\\2|\\s*\\.\\s*(get|post|put|delete|patch)\\s*\\(\\s*([\"'`])(.+?)\\5)",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
+    /** ky: ky.get('url'), ky('url'), ky.post('url') — popular fetch wrapper */
+    private static final Pattern NODE_KY = Pattern.compile(
+            "\\bky\\s*(?:\\.\\s*(get|post|put|delete|patch|head))?\\s*\\(\\s*([\"'`])(.+?)\\2",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /** ofetch / $fetch (Nuxt): ofetch('/api/data'), $fetch('/api/data') */
+    private static final Pattern NODE_OFETCH = Pattern.compile(
+            "(?:\\$fetch|ofetch|\\$ofetch)\\s*\\(\\s*([\"'`])(.+?)\\1",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /** undici: request('url'), fetch from undici */
+    private static final Pattern NODE_UNDICI = Pattern.compile(
+            "\\bundici\\.(?:request|fetch)\\s*\\(\\s*([\"'`])(.+?)\\1",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     private void detectNode(String content, String filePath, List<DetectedBackendCall> out) {
         String[] lines = content.split("\n", -1);
         for (int i = 0; i < lines.length; i++) {
@@ -173,6 +188,28 @@ public class BackendHttpCallDetectorService {
                     if (looksLikeUrl(url))
                         out.add(call(url, sgM.group(4).toUpperCase(), "node-superagent", filePath, ln));
                 }
+            }
+
+            Matcher kyM = NODE_KY.matcher(line);
+            while (kyM.find()) {
+                String method = kyM.group(1) != null ? kyM.group(1).toUpperCase() : "GET";
+                String url = collapse(kyM.group(3));
+                if (looksLikeUrl(url))
+                    out.add(call(url, method, "node-ky", filePath, ln));
+            }
+
+            Matcher ofM = NODE_OFETCH.matcher(line);
+            while (ofM.find()) {
+                String url = collapse(ofM.group(2));
+                if (looksLikeUrl(url))
+                    out.add(call(url, guessMethodNode(line), "node-ofetch", filePath, ln));
+            }
+
+            Matcher unM = NODE_UNDICI.matcher(line);
+            while (unM.find()) {
+                String url = collapse(unM.group(2));
+                if (looksLikeUrl(url))
+                    out.add(call(url, guessMethodNode(line), "node-undici", filePath, ln));
             }
         }
     }

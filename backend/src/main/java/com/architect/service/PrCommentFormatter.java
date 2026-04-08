@@ -70,17 +70,22 @@ public final class PrCommentFormatter {
         String api = primaryApiLine(impact);
         String impactUrl = frontendBase + "/impact/repo/" + impact.getSubjectId();
 
-        return switch (scenario) {
+        String body = switch (scenario) {
             case WIDE_CASCADING -> formatWide(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case CRITICAL_CROSS_SERVICE -> formatCritical(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case MEDIUM_INTERNAL -> formatMedium(impact, repos, depFiles, api, prUrl, impactUrl, aiInsight);
             case ORPHAN_API_RISK -> formatOrphan(impact, api, prUrl, impactUrl, aiInsight);
             case SAFE_REFACTOR -> formatSafe(impact, prUrl, impactUrl, aiInsight);
         };
+        return body
+                + "\n\n---\n"
+                + "_Zerqis tracks this prediction — if this PR is reverted or hotfixed, "
+                + "accuracy data is logged automatically._\n"
+                + "_React 👍 or 👎 to help calibrate future analyses._";
     }
 
     private static void appendWhyExact(StringBuilder sb, ImpactDto impact, AiRiskExplanation aiInsight) {
-        sb.append("### Why this is risky\n\n");
+        sb.append("### Why this risk level\n\n");
         appendConcreteCallSites(sb, impact, primaryApiLine(impact));
 
         List<String> factors = impact.getRiskFactors();
@@ -89,8 +94,44 @@ public final class PrCommentFormatter {
                 sb.append("- ").append(line).append("\n");
             }
         }
+
+        appendWhatIf(sb, impact);
         appendAnalysisConfidenceLine(sb, impact);
         appendAiInsight(sb, aiInsight);
+    }
+
+    /**
+     * "What if" section: shows what would need to change for the risk level to move.
+     * Helps teams understand how to reduce risk for next time.
+     */
+    private static void appendWhatIf(StringBuilder sb, ImpactDto impact) {
+        int repos = impact.getDependentsCount();
+        int unresolved = impact.getUnresolvedCallCount() != null ? impact.getUnresolvedCallCount() : 0;
+        int stale = impact.getStaleRepoCount() != null ? impact.getStaleRepoCount() : 0;
+        Double confidence = impact.getConfidenceScore();
+
+        List<String> tips = new java.util.ArrayList<>();
+
+        if (stale > 0) {
+            tips.add("Rescan " + stale + " stale repo(s) to raise confidence by up to 20%");
+        }
+        if (unresolved > 2) {
+            tips.add("Resolve " + unresolved + " unresolved call(s) (dynamic URLs, env vars) — each reduces noise in the analysis");
+        }
+        if (confidence != null && confidence < 60 && repos == 0) {
+            tips.add("Low confidence + zero dependents: this might be a false negative. Consider a deep scan before merging.");
+        }
+        if (repos >= 3) {
+            tips.add("Consider breaking this change into smaller PRs scoped to fewer downstream consumers");
+        }
+
+        if (!tips.isEmpty()) {
+            sb.append("\n<details><summary><b>How to improve this analysis</b></summary>\n\n");
+            for (String tip : tips) {
+                sb.append("- ").append(tip).append("\n");
+            }
+            sb.append("\n</details>\n\n");
+        }
     }
 
     private static void appendAiInsight(StringBuilder sb, AiRiskExplanation e) {
@@ -142,32 +183,62 @@ public final class PrCommentFormatter {
         if (impact.getConfidenceScore() == null) {
             return;
         }
-        int conf = impact.getConfidenceScore().intValue();
-        int unresolved = impact.getUnresolvedCallCount() != null ? impact.getUnresolvedCallCount() : 0;
-        int stale = impact.getStaleRepoCount() != null ? impact.getStaleRepoCount() : 0;
-        int unscanned = impact.getUnscannedRepoCount() != null ? impact.getUnscannedRepoCount() : 0;
-        int notFetched = impact.getChangedFilesNotFetched() != null ? impact.getChangedFilesNotFetched() : 0;
+        sb.append("\n").append(buildConfidenceBreakdown(impact)).append("\n");
+    }
 
-        sb.append("\n**Confidence:** ").append(conf).append("%\n");
-        if (unresolved > 0 || stale > 0 || unscanned > 0 || notFetched > 0) {
-            sb.append("**Unknowns:**\n");
-            if (unresolved > 0) {
-                sb.append("- ⚠️ ").append(unresolved).append(" API call(s) could not be resolved\n");
-            }
-            if (stale > 0) {
-                sb.append("- ⚠️ ").append(stale).append(" repo(s) have stale data (>48h)\n");
-            }
-            if (unscanned > 0) {
-                sb.append("- ⚠️ ").append(unscanned).append(" repo(s) have not been deeply scanned yet\n");
-            }
-            if (notFetched > 0) {
-                sb.append("- ⚠️ ").append(notFetched).append(" changed file(s) could not be fetched at PR head\n");
+    static String buildConfidenceBreakdown(ImpactDto result) {
+        int score = result.getConfidenceScore() == null ? 0 : result.getConfidenceScore().intValue();
+        int direct = result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0;
+        int inferred = result.getInferredMatchCount() != null ? result.getInferredMatchCount() : 0;
+        int unresolved = result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0;
+        int stale = result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0;
+        int unscanned = result.getUnscannedRepoCount() != null ? result.getUnscannedRepoCount() : 0;
+        int notFetched = result.getChangedFilesNotFetched() != null ? result.getChangedFilesNotFetched() : 0;
+
+        StringBuilder sb = new StringBuilder();
+        String emoji = score >= 80 ? "🟢" : score >= 50 ? "🟡" : "🔴";
+        sb.append(emoji).append(" **Confidence: ").append(score).append("%**\n");
+
+        List<String> lines = new java.util.ArrayList<>();
+        if (direct > 0) {
+            lines.add(direct + " direct match(es)       ● strong — exact method + path");
+        }
+        if (inferred > 0) {
+            lines.add(inferred + " inferred match(es)     ◐ medium — wildcard/suffix match");
+        }
+        if (unresolved > 0) {
+            lines.add(unresolved + " unresolved call(s)     ○ unknown — dynamic URL or env var");
+        }
+        if (stale > 0) {
+            lines.add(stale + " repo(s) stale (>72h)   ○ unknown — rescan recommended");
+        }
+        if (unscanned > 0) {
+            lines.add(unscanned + " repo(s) never scanned  ○ unknown — run deep scan");
+        }
+        if (notFetched > 0) {
+            lines.add(notFetched + " file(s) not analyzed   ○ unknown — excluded from PR head");
+        }
+
+        if (lines.isEmpty()) {
+            sb.append("└── No dependency signals detected\n");
+        } else {
+            for (int i = 0; i < lines.size(); i++) {
+                String prefix = (i == lines.size() - 1) ? "└── " : "├── ";
+                sb.append(prefix).append(lines.get(i)).append("\n");
             }
         }
-        if (stale > 0 || unscanned > 0) {
-            sb.append("\n⚠️ Data may be stale. Re-run deep scan before merge-critical decisions.\n");
-        }
-        sb.append("\n");
+
+        // Add legend on first appearance
+        sb.append("\n<sub>● = exact match (high trust) · ◐ = fuzzy match (moderate trust) · ○ = missing data (reduces confidence)</sub>\n");
+        return sb.toString();
+    }
+
+    static boolean isTrulySafe(ImpactDto result) {
+        int direct = result.getDirectMatchCount() != null ? result.getDirectMatchCount() : 0;
+        int unresolved = result.getUnresolvedCallCount() != null ? result.getUnresolvedCallCount() : 0;
+        int stale = result.getStaleRepoCount() != null ? result.getStaleRepoCount() : 0;
+        int confidence = result.getConfidenceScore() != null ? result.getConfidenceScore().intValue() : 0;
+        return direct == 0 && unresolved <= 1 && stale == 0 && confidence >= 80;
     }
 
     private static String formatCritical(ImpactDto impact, int repos, int depFiles, String api,
@@ -216,7 +287,9 @@ public final class PrCommentFormatter {
 
     private static String formatSafe(ImpactDto impact, String prUrl, String impactUrl, AiRiskExplanation aiInsight) {
         StringBuilder sb = new StringBuilder();
-        sb.append("## ✅ Zerqis: Safe to Merge\n\n");
+        sb.append(isTrulySafe(impact)
+                ? "## ✅ Zerqis: Safe to Merge\n\n"
+                : "## ✅ Zerqis: Low risk — verify manually before merging\n\n");
         sb.append("**No cross-repo impact detected** in Zerqis’s dependency graph for this change.\n\n");
         sb.append("This change appears **isolated** relative to connected services.\n\n");
         appendWhyExact(sb, impact, aiInsight);

@@ -1,10 +1,14 @@
 import axios from 'axios'
 import { clearAuthToken, getAuthToken } from '../authToken'
-import type { Repo, GithubRepo, GraphDto, ScanStatus, ImpactDto, User } from '../types'
+import type { Repo, GithubRepo, GraphDto, ScanStatus, ImpactDto, User, AtlasDashboardDto, DeadEndpointDto, PredictionAccuracy } from '../types'
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
+const V1_BASE_URL = API_BASE ? `${API_BASE}/api/v1` : '/api/v1'
+const AUTH_BASE_URL = API_BASE ? `${API_BASE}/api` : '/api'
 
 // ── Versioned API client (all /api/v1/** endpoints) ──────────────────────────
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: V1_BASE_URL,
   headers: { 'Content-Type': 'application/json' }
 })
 
@@ -12,7 +16,7 @@ const api = axios.create({
 // These paths are registered with GitHub OAuth and must never change without
 // updating the GitHub App callback URL.
 const authAxios = axios.create({
-  baseURL: '/api',
+  baseURL: AUTH_BASE_URL,
   headers: { 'Content-Type': 'application/json' }
 })
 
@@ -39,7 +43,9 @@ authAxios.interceptors.response.use(res => res, handle401)
 // ── Auth (non-versioned — OAuth integration) ─────────────────────────────────
 export const authApi = {
   getMe: () => authAxios.get<User>('/auth/me').then(r => r.data),
-  loginWithGithub: () => { window.location.href = '/api/auth/github' }
+  loginWithGithub: () => {
+    window.location.href = API_BASE ? `${API_BASE}/api/auth/github` : '/api/auth/github'
+  }
 }
 
 // ── Repos ─────────────────────────────────────────────────────────────────────
@@ -137,8 +143,20 @@ export const insightsApi = {
   summary: () => api.get<Record<string, unknown>>('/insights/summary').then(r => r.data),
 }
 
+// ── Atlas ─────────────────────────────────────────────────────────────────────
+export const atlasApi = {
+  getDashboard: () => api.get<AtlasDashboardDto>('/atlas/dashboard').then(r => r.data),
+  getDeadEndpoints: () => api.get<DeadEndpointDto[]>('/atlas/dead-endpoints').then(r => r.data),
+}
+
 // ── Version (no auth) ─────────────────────────────────────────────────────────
 export type ProductVersionInfo = { product: string; version: string; publicApi: string }
+
+export const predictionApi = {
+  globalAccuracy: () => authAxios.get<PredictionAccuracy>('/predictions/accuracy').then(r => r.data),
+  repoAccuracy: (owner: string, repo: string) =>
+    authAxios.get<PredictionAccuracy>(`/predictions/accuracy/${owner}/${repo}`).then(r => r.data),
+}
 
 export const versionApi = {
   get: () => authAxios.get<ProductVersionInfo>('/public/version').then(r => r.data),
